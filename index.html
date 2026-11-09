@@ -1,373 +1,611 @@
 <!DOCTYPE html>
-<html lang="zh-TW">
+<html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>聲波雷達迷宮：回聲獵手 (Acoustic Radar Maze)</title>
-    <style>
-        body {
-            margin: 0;
-            background-color: #030305;
-            color: #00ff66;
-            font-family: 'Courier New', Courier, monospace;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            overflow: hidden;
-            user-select: none;
-        }
-        #game-container {
-            position: relative;
-            box-shadow: 0 0 40px rgba(0, 255, 102, 0.15);
-            border: 1px solid #004411;
-        }
-        #sonar-canvas {
-            background-color: #050508;
-            display: block;
-            cursor: crosshair;
-        }
-        #hud {
-            position: absolute;
-            top: 20px;
-            left: 20px;
-            pointer-events: none;
-            line-height: 1.5;
-            font-size: 14px;
-            text-shadow: 0 0 5px #00ff66;
-        }
-        .hud-metric { margin-bottom: 8px; }
-        #alert-box {
-            position: absolute;
-            bottom: 30px;
-            left: 50%;
-            transform: translateX(-50%);
-            color: #ff0055;
-            font-weight: bold;
-            font-size: 18px;
-            text-shadow: 0 0 8px #ff0055;
-            display: none;
-            letter-spacing: 2px;
-        }
-        #start-overlay {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(5, 5, 8, 0.95);
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            z-index: 100;
-            transition: opacity 0.3s ease;
-        }
-        .start-btn {
-            background: none;
-            border: 2px solid #00ff66;
-            color: #00ff66;
-            padding: 16px 32px;
-            font-size: 20px;
-            font-weight: bold;
-            font-family: monospace;
-            cursor: pointer;
-            text-shadow: 0 0 8px #00ff66;
-            box-shadow: 0 0 15px rgba(0, 255, 102, 0.2);
-            transition: all 0.2s ease;
-        }
-        .start-btn:hover {
-            background-color: #00ff66;
-            color: #030305;
-            box-shadow: 0 0 25px #00ff66;
-        }
-        .controls-hint {
-            color: #008833;
-            font-size: 12px;
-            margin-top: 20px;
-            line-height: 1.6;
-            text-align: center;
-        }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Echo Hunter: Sonar Maze</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: #000;
+      font-family: monospace;
+      color: #ddd;
+    }
+    canvas {
+      display: block;
+      background: #000;
+    }
+    #ui {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      right: 10px;
+      pointer-events: none;
+      text-shadow: 0 0 6px rgba(255,255,255,0.25);
+      font-size: 13px;
+      line-height: 1.4;
+    }
+    .bar {
+      width: 240px;
+      height: 10px;
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.2);
+      margin-bottom: 6px;
+      position: relative;
+    }
+    .fill {
+      height: 100%;
+      width: 100%;
+    }
+    #coreFill { background: linear-gradient(90deg, #4de0ff, #2b6fff); }
+    #pfcFill  { background: linear-gradient(90deg, #ff58e3, #a04dff); }
+    #message {
+      margin-top: 8px;
+      color: #fff;
+      font-weight: bold;
+      font-size: 16px;
+    }
+    #hint {
+      margin-top: 6px;
+      color: #aaa;
+      max-width: 700px;
+    }
+  </style>
 </head>
 <body>
-
-<div id="game-container">
-    <!-- Highest Level Intercept Cover Layer -->
-    <div id="start-overlay">
-        <button class="start-btn" onclick="initializeSonarEngine()">▶ 啟動聲納主機 (INITIALIZE ENGINE)</button>
-        <div class="controls-hint">
-            【操作說明表】<br>
-            1. 滑鼠移動：控制雷達指針方向 ＆ 白色圓點前進推進<br>
-            2. 鍵盤 【Q 鍵】：發射高頻藍色波（精準高消耗、範圍短）<br>
-            3. 鍵盤 【E 鍵】：發射低頻紅色波（擴散極遠、易引來獵手）
-        </div>
+  <canvas id="game"></canvas>
+  <div id="ui">
+    <div>CORE ENERGY (Sprint)</div>
+    <div class="bar"><div id="coreFill" class="fill"></div></div>
+    <div>PFC ENERGY (Sonar)</div>
+    <div class="bar"><div id="pfcFill" class="fill"></div></div>
+    <div id="message"></div>
+    <div id="hint">
+      WASD move • Hold SHIFT sprint • Mouse aim • Q = Blue high-frequency pulse (20%) • E = Red long resonance (10%) • R = restart
     </div>
+  </div>
 
-    <div id="hud">
-        <div class="hud-metric">📡 系統狀態: SONAR SYSTEM ACTIVE</div>
-        <div class="hud-metric">🧭 雷達方位 (Radar Bearing): <span id="ui-angle">0°</span></div>
-        <div class="hud-metric">🔋 PFC 認知能量核心: <span id="ui-energy">100%</span></div>
-        <div class="hud-metric" style="color: #ffbe0b;">🧌 獵手威脅指數: <span id="ui-threat">SAFE</span></div>
-        <div class="hud-metric" style="color: #00ff66; margin-top: 15px; font-weight: bold;">空間模型建立進度: <span id="val-progress">0%</span></div>
-    </div>
-    <div id="alert-box">⚠️ 警告：偵測到未知高顯性回聲源正在高速逼近 ⚠️</div>
-    <canvas id="sonar-canvas" width="900" height="700"></canvas>
-</div>
-
-<script>
-    const canvas = document.getElementById("sonar-canvas");
+  <script>
+    // =========================
+    // Canvas setup
+    // =========================
+    const canvas = document.getElementById("game");
     const ctx = canvas.getContext("2d");
-    const overlay = document.getElementById("start-overlay");
-    
-    const state = {
-        pfc_energy: 100,
-        monster_alert: false,
-        gameOver: false,
-        win: false,
-        engineActive: false
-    };
-
-    const player = {
-        x: 100,
-        y: 100,
-        radius: 6,
-        angle: 0,
-        speed: 1.8
-    };
-
-    const monster = {
-        x: 800,
-        y: 600,
-        radius: 10,
-        speed: 1.35,
-        active: false
-    };
-
-    const escapePoint = { x: 820, y: 120, radius: 15 };
-
-    const walls = [
-        {x: 0, y: 0, w: 900, h: 20},
-        {x: 0, y: 680, w: 900, h: 20},
-        {x: 0, y: 0, w: 20, h: 700},
-        {x: 880, y: 0, w: 20, h: 700},
-        {x: 220, y: 20, w: 30, h: 420},
-        {x: 220, y: 530, w: 30, h: 170},
-        {x: 400, y: 180, w: 30, h: 520},
-        {x: 580, y: 20, w: 30, h: 450},
-        {x: 740, y: 250, w: 30, h: 450}
-    ];
-
-    let waves = [];
-    let discoveredPoints = []; 
-
-    let mouseX = player.x;
-    let mouseY = player.y;
-
-    // 點擊按鈕一鍵解鎖全域執行功能
-    function initializeSonarEngine() {
-        overlay.style.opacity = "0";
-        setTimeout(() => {
-            overlay.style.display = "none";
-        }, 300);
-        state.engineActive = true;
+    function resize() {
+      canvas.width = innerWidth;
+      canvas.height = innerHeight;
     }
+    addEventListener("resize", resize);
+    resize();
 
-    // 捕獲滑鼠移動坐標
-    window.addEventListener("mousemove", (e) => {
-        if (!state.engineActive) return;
-        const rect = canvas.getBoundingClientRect();
-        mouseX = e.clientX - rect.left;
-        mouseY = e.clientY - rect.top;
+    const coreFill = document.getElementById("coreFill");
+    const pfcFill = document.getElementById("pfcFill");
+    const messageEl = document.getElementById("message");
+
+    // =========================
+    // Input
+    // =========================
+    const keys = {};
+    let mouse = { x: canvas.width / 2, y: canvas.height / 2 };
+    addEventListener("keydown", (e) => {
+      keys[e.key.toLowerCase()] = true;
+      if ((e.key === "q" || e.key === "Q") && !e.repeat) firePulse("Q");
+      if ((e.key === "e" || e.key === "E") && !e.repeat) firePulse("E");
+      if ((e.key === "r" || e.key === "R") && !e.repeat) initGame();
+    });
+    addEventListener("keyup", (e) => keys[e.key.toLowerCase()] = false);
+    addEventListener("mousemove", (e) => {
+      mouse.x = e.clientX;
+      mouse.y = e.clientY;
     });
 
-    // 🚀 全域最高優先級按鍵接管：徹底破除不互動 Bug
-    document.addEventListener("keydown", (e) => {
-        if (!state.engineActive || state.gameOver) return;
-        
-        const activeKey = e.key.toLowerCase();
-        
-        // Q 鍵脈衝
-        if (activeKey === 'q' && state.pfc_energy >= 20) {
-            state.pfc_energy -= 20;
-            spawnWave("high");
-        }
-        // E 鍵共振
-        if (activeKey === 'e' && state.pfc_energy >= 10) {
-            state.pfc_energy -= 10;
-            spawnWave("low");
-        }
-    });
+    // =========================
+    // Game state
+    // =========================
+    const tile = 24;
+    const cols = 25;
+    const rows = 25;
+    let map = [];
+    let mapW = cols * 2 + 1;
+    let mapH = rows * 2 + 1;
 
-    function spawnWave(type) {
-        const numParticles = type === "high" ? 180 : 360;
-        const speed = type === "high" ? 6.5 : 3.5;
-        const maxLife = type === "high" ? 40 : 130;
-        const color = type === "high" ? "rgba(0, 136, 255," : "rgba(255, 0, 110,";
+    let player, monster, door;
+    let particles = [];
+    let glowDots = [];
+    let noiseRipples = [];
+    let gameState = "playing"; // playing | won | lost
+    let lastCrashTime = 0;
+    let lastTime = performance.now();
 
-        for (let i = 0; i < numParticles; i++) {
-            const angle = (Math.PI * 2 / numParticles) * i;
-            waves.push({
-                x: player.x,
-                y: player.y,
-                vx: Math.cos(angle) * speed,
-                vy: Math.sin(angle) * speed,
-                life: maxLife,
-                maxLife: maxLife,
-                color: color,
-                waveType: type
-            });
+    function randInt(a, b) { return Math.floor(Math.random() * (b - a + 1)) + a; }
+    function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+    function dist(ax, ay, bx, by) { return Math.hypot(ax - bx, ay - by); }
+
+    // =========================
+    // Maze generation (recursive backtracker)
+    // =========================
+    function generateMaze() {
+      mapW = cols * 2 + 1;
+      mapH = rows * 2 + 1;
+      map = Array.from({ length: mapH }, () => Array(mapW).fill(1));
+
+      const visited = Array.from({ length: rows }, () => Array(cols).fill(false));
+      const sx = Math.floor(cols / 2);
+      const sy = Math.floor(rows / 2);
+      const stack = [{ x: sx, y: sy }];
+      visited[sy][sx] = true;
+      map[sy * 2 + 1][sx * 2 + 1] = 0;
+
+      const dirs = [
+        [1, 0], [-1, 0], [0, 1], [0, -1]
+      ];
+
+      while (stack.length) {
+        const cur = stack[stack.length - 1];
+        const shuffled = dirs.slice().sort(() => Math.random() - 0.5);
+        let moved = false;
+        for (const [dx, dy] of shuffled) {
+          const nx = cur.x + dx, ny = cur.y + dy;
+          if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
+          if (visited[ny][nx]) continue;
+
+          visited[ny][nx] = true;
+          map[ny * 2 + 1][nx * 2 + 1] = 0;
+          map[cur.y * 2 + 1 + dy][cur.x * 2 + 1 + dx] = 0; // knock wall
+          stack.push({ x: nx, y: ny });
+          moved = true;
+          break;
         }
+        if (!moved) stack.pop();
+      }
+
+      // Pick perimeter door
+      const side = randInt(0, 3); // 0 top,1 bottom,2 left,3 right
+      const candidates = [];
+      if (side === 0) {
+        for (let x = 1; x < mapW - 1; x += 2) if (map[1][x] === 0) candidates.push({ x, y: 0 });
+      } else if (side === 1) {
+        for (let x = 1; x < mapW - 1; x += 2) if (map[mapH - 2][x] === 0) candidates.push({ x, y: mapH - 1 });
+      } else if (side === 2) {
+        for (let y = 1; y < mapH - 1; y += 2) if (map[y][1] === 0) candidates.push({ x: 0, y });
+      } else {
+        for (let y = 1; y < mapH - 1; y += 2) if (map[y][mapW - 2] === 0) candidates.push({ x: mapW - 1, y });
+      }
+      door = candidates[Math.floor(Math.random() * candidates.length)];
+      map[door.y][door.x] = 2;
+
+      const playerStart = { mx: sx * 2 + 1, my: sy * 2 + 1 };
+
+      // Monster spawn in random passage far from player
+      let spawn = null;
+      for (let i = 0; i < 5000; i++) {
+        const mx = randInt(1, mapW - 2);
+        const my = randInt(1, mapH - 2);
+        if (map[my][mx] !== 0) continue;
+        if (Math.abs(mx - playerStart.mx) + Math.abs(my - playerStart.my) < 28) continue;
+        spawn = { mx, my };
+        break;
+      }
+      if (!spawn) spawn = { mx: 1, my: 1 };
+
+      return { playerStart, monsterStart: spawn };
     }
 
-    function checkCollision(circle, rect) {
-        const distX = Math.abs(circle.x - rect.x - rect.w / 2);
-        const distY = Math.abs(circle.y - rect.y - rect.h / 2);
-        if (distX > (rect.w / 2 + circle.radius)) return false;
-        if (distY > (rect.h / 2 + circle.radius)) return false;
-        if (distX <= (rect.w / 2)) return true;
-        if (distY <= (rect.h / 2)) return true;
-        const dx = distX - rect.w / 2;
-        const dy = distY - rect.h / 2;
-        return (dx * dx + dy * dy <= (circle.radius * circle.radius));
+    function toWorld(mx, my) {
+      return { x: (mx + 0.5) * tile, y: (my + 0.5) * tile };
     }
 
-    function update() {
-        if (!state.engineActive || state.gameOver) return;
+    function worldToMap(x, y) {
+      return { mx: Math.floor(x / tile), my: Math.floor(y / tile) };
+    }
 
-        // 白色圓點前進軌跡更新
-        const dx = mouseX - player.x;
-        const dy = mouseY - player.y;
-        player.angle = Math.atan2(dy, dx);
-        
-        const nextX = player.x + Math.cos(player.angle) * player.speed;
-        const nextY = player.y + Math.sin(player.angle) * player.speed;
-        
-        let collides = false;
-        walls.forEach(w => {
-            if (checkCollision({x: nextX, y: nextY, radius: player.radius}, w)) collides = true;
+    // =========================
+    // Collision
+    // =========================
+    function isSolidTile(mx, my) {
+      if (my < 0 || mx < 0 || my >= mapH || mx >= mapW) return true;
+      return map[my][mx] === 1;
+    }
+
+    function circleRectCollide(cx, cy, r, rx, ry, rw, rh) {
+      const nx = clamp(cx, rx, rx + rw);
+      const ny = clamp(cy, ry, ry + rh);
+      return (cx - nx) ** 2 + (cy - ny) ** 2 < r * r;
+    }
+
+    function collidesWall(x, y, r) {
+      const minX = Math.floor((x - r) / tile);
+      const maxX = Math.floor((x + r) / tile);
+      const minY = Math.floor((y - r) / tile);
+      const maxY = Math.floor((y + r) / tile);
+      for (let my = minY; my <= maxY; my++) {
+        for (let mx = minX; mx <= maxX; mx++) {
+          if (!isSolidTile(mx, my)) continue;
+          const rx = mx * tile, ry = my * tile;
+          if (circleRectCollide(x, y, r, rx, ry, tile, tile)) return true;
+        }
+      }
+      return false;
+    }
+
+    function tryMove(entity, dx, dy, radius) {
+      let collided = false;
+      let nx = entity.x + dx;
+      if (!collidesWall(nx, entity.y, radius)) entity.x = nx;
+      else collided = true;
+
+      let ny = entity.y + dy;
+      if (!collidesWall(entity.x, ny, radius)) entity.y = ny;
+      else collided = true;
+
+      return collided;
+    }
+
+    // =========================
+    // Pathfinding (BFS over map)
+    // =========================
+    function bfsPath(startMx, startMy, endMx, endMy) {
+      const q = [{ x: startMx, y: startMy }];
+      const visited = Array.from({ length: mapH }, () => Array(mapW).fill(false));
+      const parent = Array.from({ length: mapH }, () => Array(mapW).fill(null));
+      visited[startMy][startMx] = true;
+      const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
+
+      while (q.length) {
+        const n = q.shift();
+        if (n.x === endMx && n.y === endMy) break;
+        for (const [dx,dy] of dirs) {
+          const nx = n.x + dx, ny = n.y + dy;
+          if (nx < 0 || ny < 0 || nx >= mapW || ny >= mapH) continue;
+          if (visited[ny][nx]) continue;
+          if (map[ny][nx] === 1) continue;
+          visited[ny][nx] = true;
+          parent[ny][nx] = n;
+          q.push({ x: nx, y: ny });
+        }
+      }
+
+      if (!visited[endMy][endMx]) return [];
+      const path = [];
+      let cur = { x: endMx, y: endMy };
+      while (cur) {
+        path.push(cur);
+        cur = parent[cur.y][cur.x];
+      }
+      path.reverse();
+      return path;
+    }
+
+    // =========================
+    // Sonar, noise, monster
+    // =========================
+    function wakeMonster() {
+      if (!monster.awake) {
+        monster.awake = true;
+        monster.path = [];
+        monster.pathIdx = 0;
+        monster.pathRecalcTimer = 0;
+      }
+    }
+
+    function firePulse(type) {
+      if (gameState !== "playing") return;
+      const isQ = type === "Q";
+      const cost = isQ ? 20 : 10;
+      if (player.pfc < cost) return;
+      player.pfc -= cost;
+
+      const speed = isQ ? 6.5 : 3.5;
+      const life = isQ ? 40 : 130;
+      const color = isQ ? "80,170,255" : "255,70,70";
+      const spread = isQ ? 0.16 : 0.30;
+      const count = isQ ? 24 : 28;
+
+      const aim = Math.atan2(mouse.y - canvas.height / 2, mouse.x - canvas.width / 2);
+
+      for (let i = 0; i < count; i++) {
+        const a = aim + (Math.random() * 2 - 1) * spread;
+        particles.push({
+          x: player.x,
+          y: player.y,
+          vx: Math.cos(a) * speed,
+          vy: Math.sin(a) * speed,
+          life,
+          color,
+          type
         });
-        
-        if (!collides) {
-            player.x = nextX;
-            player.y = nextY;
+      }
+    }
+
+    function spawnCrashRipple(x, y) {
+      noiseRipples.push({ x, y, r: 2, speed: 4.5, max: 350, alive: true });
+    }
+
+    // =========================
+    // Init
+    // =========================
+    function initGame() {
+      const { playerStart, monsterStart } = generateMaze();
+      const p = toWorld(playerStart.mx, playerStart.my);
+      const m = toWorld(monsterStart.mx, monsterStart.my);
+      player = {
+        x: p.x,
+        y: p.y,
+        r: 6,
+        speed: 1.9,
+        sprintSpeed: 3.1,
+        core: 100,
+        pfc: 100
+      };
+      monster = {
+        x: m.x,
+        y: m.y,
+        r: 9,
+        awake: false,
+        speed: 1.65,
+        revealTimer: 0,
+        path: [],
+        pathIdx: 0,
+        pathRecalcTimer: 0
+      };
+      particles = [];
+      glowDots = [];
+      noiseRipples = [];
+      gameState = "playing";
+      messageEl.textContent = "";
+    }
+
+    // =========================
+    // Update
+    // =========================
+    function update(dt) {
+      if (gameState !== "playing") return;
+
+      // --- Player move ---
+      let mx = 0, my = 0;
+      if (keys["w"]) my -= 1;
+      if (keys["s"]) my += 1;
+      if (keys["a"]) mx -= 1;
+      if (keys["d"]) mx += 1;
+      const moving = mx !== 0 || my !== 0;
+      if (moving) {
+        const len = Math.hypot(mx, my);
+        mx /= len; my /= len;
+      }
+
+      const sprinting = keys["shift"] && player.core > 0 && moving;
+      const speed = sprinting ? player.sprintSpeed : player.speed;
+      const collided = tryMove(player, mx * speed * dt * 60, my * speed * dt * 60, player.r);
+
+      // Core energy: drains while moving, 2x when sprint
+      if (moving) {
+        const drain = sprinting ? 12 : 6;
+        player.core = clamp(player.core - drain * dt, 0, 100);
+      } else {
+        player.core = clamp(player.core + 10 * dt, 0, 100);
+      }
+
+      // PFC regen
+      player.pfc = clamp(player.pfc + 12 * dt, 0, 100);
+
+      // Wall crash -> noise ripple
+      const now = performance.now();
+      if (collided && now - lastCrashTime > 220) {
+        lastCrashTime = now;
+        spawnCrashRipple(player.x, player.y);
+      }
+
+      // --- Noise ripples update ---
+      for (let i = noiseRipples.length - 1; i >= 0; i--) {
+        const nr = noiseRipples[i];
+        nr.r += nr.speed * dt * 60;
+        if (nr.r > nr.max) noiseRipples.splice(i, 1);
+
+        // Wake monster if ripple touches
+        if (!monster.awake) {
+          if (dist(nr.x, nr.y, monster.x, monster.y) <= nr.r + monster.r) {
+            wakeMonster();
+            monster.revealTimer = Math.max(monster.revealTimer, 90);
+          }
+        }
+      }
+
+      // --- Sonar particles ---
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.life--;
+        p.x += p.vx * dt * 60;
+        p.y += p.vy * dt * 60;
+
+        // Monster intercept touch
+        if (dist(p.x, p.y, monster.x, monster.y) <= monster.r + 2) {
+          wakeMonster();
+          monster.revealTimer = Math.max(monster.revealTimer, 90);
+          particles.splice(i, 1);
+          continue;
         }
 
-        if (state.pfc_energy < 100) state.pfc_energy = Math.min(100, state.pfc_energy + 0.22);
-
-        waves.forEach((w) => {
-            w.x += w.vx;
-            w.y += w.vy;
-            w.life--;
-
-            walls.forEach(wall => {
-                if (w.x >= wall.x && w.x <= wall.x + wall.w && w.y >= wall.y && w.y <= wall.y + wall.h) {
-                    discoveredPoints.push({x: w.x, y: w.y, type: w.waveType, alpha: 1.0});
-                    w.life = 0; 
-                }
-            });
-
-            if (monster.active === false && Math.hypot(w.x - monster.x, w.y - monster.y) < monster.radius) {
-                monster.active = true;
-                state.monster_alert = true;
-                document.getElementById("alert-box").style.display = "block";
-                document.getElementById("ui-threat").innerText = "🚨 PURSUING";
-                document.getElementById("ui-threat").style.color = "#ff0055";
-            }
-        });
-        waves = waves.filter(w => w.life > 0);
-
-        if (monster.active) {
-            const mdx = player.x - monster.x;
-            const mdy = player.y - monster.y;
-            const mAngle = Math.atan2(mdy, mdx);
-            monster.x += Math.cos(mAngle) * monster.speed;
-            monster.y += Math.sin(mAngle) * monster.speed;
-
-            if (Math.hypot(player.x - monster.x, player.y - monster.y) < player.radius + monster.radius) {
-                state.gameOver = true;
-                state.win = false;
-            }
+        // Wall hit -> glowing dot
+        if (collidesWall(p.x, p.y, 1.5)) {
+          glowDots.push({
+            x: p.x,
+            y: p.y,
+            a: 1.0,
+            color: p.type === "Q" ? "120,190,255" : "255,70,70"
+          });
+          particles.splice(i, 1);
+          continue;
         }
 
-        if (Math.hypot(player.x - escapePoint.x, player.y - escapePoint.y) < escapePoint.radius) {
-            state.gameOver = true;
-            state.win = true;
+        if (p.life <= 0) particles.splice(i, 1);
+      }
+
+      // --- Glow decay ---
+      for (let i = glowDots.length - 1; i >= 0; i--) {
+        glowDots[i].a *= 0.9965; // ~0.35% fade/frame
+        if (glowDots[i].a < 0.02) glowDots.splice(i, 1);
+      }
+
+      // --- Monster pursuit ---
+      if (monster.awake) {
+        monster.pathRecalcTimer -= dt;
+        const mc = worldToMap(monster.x, monster.y);
+        const pc = worldToMap(player.x, player.y);
+
+        if (monster.pathRecalcTimer <= 0) {
+          monster.path = bfsPath(mc.mx, mc.my, pc.mx, pc.my);
+          monster.pathIdx = Math.min(1, Math.max(0, monster.path.length - 1));
+          monster.pathRecalcTimer = 0.35;
         }
 
-        // 殘影自動衰減 (Generative Model Sensory Decay)
-        discoveredPoints.forEach(p => p.alpha -= 0.0035);
-        discoveredPoints = discoveredPoints.filter(p => p.alpha > 0);
+        if (monster.path && monster.path.length > 1) {
+          const idx = clamp(monster.pathIdx, 1, monster.path.length - 1);
+          const wpCell = monster.path[idx];
+          const wp = toWorld(wpCell.x, wpCell.y);
+          const dx = wp.x - monster.x;
+          const dy = wp.y - monster.y;
+          const d = Math.hypot(dx, dy);
 
-        // 即時面板數值渲染
-        const degreeAngle = Math.round((player.angle * 180 / Math.PI + 360) % 360);
-        document.getElementById("ui-angle").innerText = `${degreeAngle}°`;
-        document.getElementById("ui-energy").innerText = `${Math.round(state.pfc_energy)}%`;
-        
-const currentProgress = Math.min(100, Math.round((Math.hypot(player.x - 100, player.y - 100) / 940) * 100));
-document.getElementById("val-progress").innerText = ${currentProgress}%;
-}
-function draw() {
-ctx.fillStyle = "#050508";
-ctx.fillRect(0, 0, canvas.width, canvas.height);
-// 1. 渲染雷達記憶殘影
-discoveredPoints.forEach(p => {
-ctx.fillStyle = p.type === "high" ? rgba(0, 136, 255, ${p.alpha}) : rgba(255, 0, 110, ${p.alpha});
-ctx.fillRect(p.x, p.y, 2, 2);
-});
-// 2. 渲染擴散粒子
-waves.forEach(w => {
-const alpha = w.life / w.maxLife;
-ctx.fillStyle = ${w.color}${alpha});
-ctx.fillRect(w.x, w.y, 2, 2);
-});
-// 3. 渲染白色發光主點
-ctx.beginPath();
-ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
-ctx.fillStyle = "#ffffff";
-ctx.shadowBlur = 12;
-ctx.shadowColor = "#ffffff";
-ctx.fill();
-ctx.shadowBlur = 0;
-// 雷達引導線
-ctx.beginPath();
-ctx.moveTo(player.x, player.y);
-ctx.lineTo(player.x + Math.cos(player.angle) * 20, player.y + Math.sin(player.angle) * 20);
-ctx.strokeStyle = "rgba(0, 255, 102, 0.5)";
-ctx.lineWidth = 1.5;
-ctx.stroke();
-// 4. 渲染怪物的反向共振波
-if (monster.active) {
-waves.forEach(w => {
-if (Math.hypot(w.x - monster.x, w.y - monster.y) < 55) {
-ctx.beginPath();
-ctx.arc(monster.x, monster.y, monster.radius + 20 * Math.random(), 0, Math.PI * 2);
-ctx.strokeStyle = rgba(255, 0, 85, ${w.life / w.maxLife});
-ctx.stroke();
-}
-});
-}
-// 結算畫面
-if (state.gameOver) {
-ctx.fillStyle = "rgba(3, 3, 5, 0.92)";
-ctx.fillRect(0, 0, canvas.width, canvas.height);
-ctx.font = "22px Courier New";
-ctx.textAlign = "center";
-ctx.shadowBlur = 10;
-if (state.win) {
-ctx.fillStyle = "#00ff66";
-ctx.shadowColor = "#00ff66";
-ctx.fillText("👑 認知模型重構成功：成功逃脫迷宮 👑", canvas.width / 2, canvas.height / 2);
-} else {
-ctx.fillStyle = "#ff0055";
-ctx.shadowColor = "#ff0055";
-ctx.fillText("🛑 預測加工崩潰：你被回聲獵手捕獲 🛑", canvas.width / 2, canvas.height / 2);
-}
-ctx.shadowBlur = 0;
-}
-}
-function runSystemLoop() {
-update();
-draw();
-requestAnimationFrame(runSystemLoop);
-}
-runSystemLoop();
+          if (d < 4) {
+            monster.pathIdx = clamp(monster.pathIdx + 1, 1, monster.path.length - 1);
+          } else {
+            const vx = (dx / d) * monster.speed * dt * 60;
+            const vy = (dy / d) * monster.speed * dt * 60;
+            tryMove(monster, vx, vy, monster.r);
+          }
+        }
+
+        if (dist(player.x, player.y, monster.x, monster.y) < player.r + monster.r) {
+          gameState = "lost";
+          messageEl.textContent = "CAPTURED BY THE ECHO HUNTER — Press R to restart";
+        }
+      }
+
+      // Reveal timer decay
+      if (monster.revealTimer > 0) monster.revealTimer--;
+
+      // --- Win check ---
+      const pc = worldToMap(player.x, player.y);
+      if (pc.mx === door.x && pc.my === door.y) {
+        gameState = "won";
+        messageEl.textContent = "ESCAPED THE MAZE — Press R to play again";
+      }
+
+      // HUD bars
+      coreFill.style.width = `${player.core}%`;
+      pfcFill.style.width = `${player.pfc}%`;
+    }
+
+    // =========================
+    // Draw
+    // =========================
+    function draw() {
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      const camX = player.x - canvas.width / 2;
+      const camY = player.y - canvas.height / 2;
+      const sx = (x) => x - camX;
+      const sy = (y) => y - camY;
+
+      // Door (subtle cyan slit on perimeter)
+      const doorWorld = toWorld(door.x, door.y);
+      ctx.save();
+      ctx.globalAlpha = 0.35;
+      ctx.strokeStyle = "#66ffff";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(sx(doorWorld.x), sy(doorWorld.y), 8, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+
+      // Glow dots from sonar impacts
+      for (const g of glowDots) {
+        ctx.fillStyle = `rgba(${g.color},${g.a})`;
+        ctx.beginPath();
+        ctx.arc(sx(g.x), sy(g.y), 2.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Sonar particles
+      for (const p of particles) {
+        const alpha = Math.max(0, p.life / (p.type === "Q" ? 40 : 130));
+        ctx.fillStyle = `rgba(${p.color},${0.85 * alpha})`;
+        ctx.beginPath();
+        ctx.arc(sx(p.x), sy(p.y), 2.1, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Noise ripples
+      for (const n of noiseRipples) {
+        ctx.strokeStyle = `rgba(255,220,60,${Math.max(0, 1 - n.r / n.max) * 0.9})`;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(sx(n.x), sy(n.y), n.r, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      // Monster reveal (only when recently skimmed by sonar / wake event)
+      if (monster.revealTimer > 0) {
+        const flicker = 0.55 + Math.random() * 0.45;
+        const t = performance.now() * 0.012;
+        const pulseR = 12 + Math.sin(t) * 4;
+        ctx.strokeStyle = `rgba(255,30,30,${flicker})`;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(sx(monster.x), sy(monster.y), pulseR, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.fillStyle = `rgba(255,40,40,${0.25 * flicker})`;
+        ctx.beginPath();
+        ctx.arc(sx(monster.x), sy(monster.y), 4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Player radar pointer
+      const aim = Math.atan2(mouse.y - canvas.height / 2, mouse.x - canvas.width / 2);
+      ctx.strokeStyle = "rgba(255,255,255,0.5)";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(canvas.width / 2, canvas.height / 2);
+      ctx.lineTo(
+        canvas.width / 2 + Math.cos(aim) * 90,
+        canvas.height / 2 + Math.sin(aim) * 90
+      );
+      ctx.stroke();
+
+      // Player (white dot centered)
+      ctx.fillStyle = "#fff";
+      ctx.beginPath();
+      ctx.arc(canvas.width / 2, canvas.height / 2, player.r, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Center vignette glow
+      const grd = ctx.createRadialGradient(
+        canvas.width / 2, canvas.height / 2, 0,
+        canvas.width / 2, canvas.height / 2, 130
+      );
+      grd.addColorStop(0, "rgba(255,255,255,0.04)");
+      grd.addColorStop(1, "rgba(255,255,255,0)");
+      ctx.fillStyle = grd;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+
+    // =========================
+    // Main loop
+    // =========================
+    function loop(now) {
+      const dt = Math.min(0.033, (now - lastTime) / 1000);
+      lastTime = now;
+      update(dt);
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    initGame();
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>
