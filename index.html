@@ -3,736 +3,105 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Echo Hunter: Cold War Radar Build</title>
+  <title>Echo Hunter: Deepwater Contact</title>
   <style>
-    html, body {
-      margin: 0;
-      padding: 0;
-      overflow: hidden;
-      background: #000;
-      font-family: Consolas, monospace;
-      color: #9cff9c;
-    }
-    canvas { display: block; background: #000; }
-
-    #ui {
-      position: fixed;
-      top: 12px;
-      left: 12px;
-      right: 12px;
-      pointer-events: none;
-      text-shadow: 0 0 8px rgba(120,255,120,0.3);
-      font-size: 13px;
-      line-height: 1.4;
-    }
-    .bar {
-      width: 270px;
-      height: 10px;
-      border: 1px solid rgba(120,255,120,0.4);
-      background: rgba(120,255,120,0.08);
-      margin-bottom: 7px;
-    }
-    .fill { height: 100%; width: 100%; }
-    #coreFill { background: linear-gradient(90deg, #7dff7d, #2abf2a); }
-    #pfcFill  { background: linear-gradient(90deg, #7de6ff, #2d6cff); }
-
-    #msg {
-      margin-top: 8px;
-      font-weight: bold;
-      font-size: 16px;
-      color: #d4ffd4;
-    }
-    #hint {
-      margin-top: 5px;
-      color: #8ab88a;
-      max-width: 980px;
-    }
+    :root { --glow:#70f4dc; --dim:#459c92; --panel:rgba(2,20,25,.82); }
+    * { box-sizing:border-box; }
+    html,body { margin:0; padding:0; overflow:hidden; background:#020b10; color:#a5f8e6; font-family:Consolas,"Courier New",monospace; }
+    canvas { display:block; background:#020b10; }
+    #ui { position:fixed; inset:14px 16px auto; pointer-events:none; text-shadow:0 0 10px rgba(80,255,220,.3); font-size:12px; line-height:1.45; }
+    .panel { display:inline-block; min-width:245px; padding:10px 12px; border:1px solid rgba(112,244,220,.32); background:var(--panel); box-shadow:inset 0 0 18px rgba(35,150,140,.08),0 0 18px rgba(0,0,0,.4); }
+    .label { color:#74bdb4; letter-spacing:1.5px; font-size:10px; }
+    .bar { width:220px; height:8px; border:1px solid rgba(112,244,220,.35); background:rgba(112,244,220,.08); margin:4px 0 9px; }
+    .fill { height:100%; width:100%; transition:width .12s linear; }
+    #coreFill { background:linear-gradient(90deg,#ffe39a,#f3a75d); box-shadow:0 0 8px #f3a75d; }
+    #pfcFill { background:linear-gradient(90deg,#73ffe2,#2bb9c2); box-shadow:0 0 8px #4debd7; }
+    #msg { margin-top:7px; color:#e4fff8; font-weight:bold; font-size:15px; }
+    #hint { color:#78b9b1; margin-top:7px; max-width:900px; }
+    #contact { position:fixed; right:18px; top:16px; padding:8px 11px; border:1px solid rgba(112,244,220,.25); background:var(--panel); color:#73bdb3; letter-spacing:1px; font-size:10px; pointer-events:none; }
   </style>
 </head>
 <body>
 <canvas id="game"></canvas>
-
-<div id="ui">
-  <div>CORE ENERGY (Sprint)</div>
-  <div class="bar"><div id="coreFill" class="fill"></div></div>
-
-  <div>PFC ENERGY (Sonar)</div>
-  <div class="bar"><div id="pfcFill" class="fill"></div></div>
-
+<div id="ui"><div class="panel">
+  <div class="label">BATTERY / SPRINT CAPACITOR</div><div class="bar"><div id="coreFill" class="fill"></div></div>
+  <div class="label">PFC / ACTIVE SONAR CHARGE</div><div class="bar"><div id="pfcFill" class="fill"></div></div>
   <div id="msg"></div>
-  <div id="hint">
-    WASD move • Hold SHIFT sprint • Mouse aim • Q = Blue precision sector • E = Red wide resonance • R = Restart
-  </div>
-</div>
-
+  <div id="hint">WASD move · SHIFT sprint · Mouse aim · Q narrow ping · E wide ping · R restart</div>
+</div></div>
+<div id="contact">HYDROPHONE ARRAY&nbsp; · &nbsp;CONTACTS: <span id="contactState">QUIET</span></div>
 <script>
-const canvas = document.getElementById("game");
-const ctx = canvas.getContext("2d");
-const coreFill = document.getElementById("coreFill");
-const pfcFill = document.getElementById("pfcFill");
-const msgEl = document.getElementById("msg");
-
-function resize(){ canvas.width = innerWidth; canvas.height = innerHeight; }
-addEventListener("resize", resize); resize();
-
-const keys = {};
-let mouse = { x: canvas.width/2, y: canvas.height/2 };
-addEventListener("keydown", e => {
-  const k = e.key.toLowerCase();
-  keys[k] = true;
-  if ((k === "q" || k === "e") && !e.repeat) fireSonar(k.toUpperCase());
-  if (k === "r" && !e.repeat) initGame();
-});
-addEventListener("keyup", e => keys[e.key.toLowerCase()] = false);
-addEventListener("mousemove", e => { mouse.x = e.clientX; mouse.y = e.clientY; });
-
-function clamp(v,a,b){ return Math.max(a, Math.min(b,v)); }
-function randInt(a,b){ return Math.floor(Math.random()*(b-a+1))+a; }
-function dist(ax,ay,bx,by){ return Math.hypot(ax-bx, ay-by); }
-function angleDiff(a,b){
-  let d = a - b;
-  while (d > Math.PI) d -= Math.PI*2;
-  while (d < -Math.PI) d += Math.PI*2;
-  return d;
-}
-
-// ===== Maze (wider + forgiving) =====
-const tile = 52;            // wider roads (increased)
-const cols = 13, rows = 13;
-let map = [];
-let mapW = cols*2+1, mapH = rows*2+1;
-
-let player, monster, door;
-let sonarWaves = [];
-let glowDots = [];
-let noiseRipples = [];
-let exitPulses = [];
-let monsterPulses = [];     // new: monster sonar rings
-let exitPulseTimer = 0;
-let monsterPulseTimer = 0;
-
-let gameState = "playing";
-let lastCrash = 0;
-let lastTime = performance.now();
-
-// replay trails
-let runTrail = [];
-let monsterTrail = [];
-let trailTimer = 0;
-let monsterTrailTimer = 0;
-let replayClock = 0;
-
-function toWorld(mx,my){ return { x:(mx+0.5)*tile, y:(my+0.5)*tile }; }
-function worldToMap(x,y){ return { mx:Math.floor(x/tile), my:Math.floor(y/tile) }; }
-
+const canvas=document.getElementById('game'),ctx=canvas.getContext('2d');
+const coreFill=document.getElementById('coreFill'),pfcFill=document.getElementById('pfcFill'),msgEl=document.getElementById('msg'),contactEl=document.getElementById('contactState');
+function resize(){canvas.width=innerWidth;canvas.height=innerHeight;} addEventListener('resize',resize);resize();
+const keys={};let mouse={x:canvas.width/2,y:canvas.height/2};
+addEventListener('keydown',e=>{const k=e.key.toLowerCase();keys[k]=true;if((k==='q'||k==='e')&&!e.repeat)fireSonar(k.toUpperCase());if(k==='r'&&!e.repeat)initGame();});
+addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);addEventListener('mousemove',e=>{mouse.x=e.clientX;mouse.y=e.clientY;});
+function clamp(v,a,b){return Math.max(a,Math.min(b,v));}function randInt(a,b){return Math.floor(Math.random()*(b-a+1))+a;}function dist(x,y,a,b){return Math.hypot(x-a,y-b);}function angleDiff(a,b){let d=a-b;while(d>Math.PI)d-=Math.PI*2;while(d<-Math.PI)d+=Math.PI*2;return d;}
+const tile=52,cols=13,rows=13;let map=[],mapW=cols*2+1,mapH=rows*2+1,player,monster,door,sonarWaves=[],glowDots=[],noiseRipples=[],exitPulses=[],monsterPulses=[],exitPulseTimer=0,monsterPulseTimer=0,gameState='playing',lastCrash=0,lastTime=performance.now(),runTrail=[],monsterTrail=[],trailTimer=0,monsterTrailTimer=0,replayClock=0;
+function toWorld(mx,my){return{x:(mx+.5)*tile,y:(my+.5)*tile};}function worldToMap(x,y){return{mx:Math.floor(x/tile),my:Math.floor(y/tile)};}
+function cellDegree(cx,cy){let n=0;for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]])if(map[cy*2+1+dy][cx*2+1+dx]===0)n++;return n;}
 function generateMaze(){
-  mapW = cols*2+1; mapH = rows*2+1;
-  map = Array.from({length: mapH}, ()=>Array(mapW).fill(1));
-  const visited = Array.from({length: rows}, ()=>Array(cols).fill(false));
-
-  const sx = Math.floor(cols/2), sy = Math.floor(rows/2);
-  const stack = [{x:sx,y:sy}];
-  visited[sy][sx] = true;
-  map[sy*2+1][sx*2+1] = 0;
-
-  const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
-  while(stack.length){
-    const c = stack[stack.length-1];
-    const shuffled = dirs.slice().sort(()=>Math.random()-0.5);
-    let moved = false;
-    for(const [dx,dy] of shuffled){
-      const nx = c.x+dx, ny = c.y+dy;
-      if(nx<0||ny<0||nx>=cols||ny>=rows) continue;
-      if(visited[ny][nx]) continue;
-      visited[ny][nx] = true;
-      map[ny*2+1][nx*2+1] = 0;
-      map[c.y*2+1+dy][c.x*2+1+dx] = 0;
-      stack.push({x:nx,y:ny});
-      moved = true;
-      break;
-    }
-    if(!moved) stack.pop();
-  }
-
-  // forgiving loops
-  const extraBreaks = Math.floor(cols * rows * 0.42);
-  for(let i=0;i<extraBreaks;i++){
-    if(Math.random() < 0.5){
-      const x = randInt(2,mapW-3), y = randInt(1,mapH-2);
-      if(x%2===0 && y%2===1 && map[y][x]===1 && map[y][x-1]===0 && map[y][x+1]===0) map[y][x]=0;
-    } else {
-      const x = randInt(1,mapW-2), y = randInt(2,mapH-3);
-      if(x%2===1 && y%2===0 && map[y][x]===1 && map[y-1][x]===0 && map[y+1][x]===0) map[y][x]=0;
-    }
-  }
-
-  // open pockets
-  for(let i=0;i<3;i++){
-    const cx = randInt(3,mapW-4), cy = randInt(3,mapH-4);
-    for(let y=-1;y<=1;y++){
-      for(let x=-1;x<=1;x++){
-        const xx=cx+x, yy=cy+y;
-        if(xx<=0||yy<=0||xx>=mapW-1||yy>=mapH-1) continue;
-        map[yy][xx] = 0;
-      }
-    }
-  }
-
-  // door on perimeter
-  const side = randInt(0,3);
-  const candidates = [];
-  if(side===0){ for(let x=1;x<mapW-1;x+=2) if(map[1][x]===0) candidates.push({x,y:0}); }
-  if(side===1){ for(let x=1;x<mapW-1;x+=2) if(map[mapH-2][x]===0) candidates.push({x,y:mapH-1}); }
-  if(side===2){ for(let y=1;y<mapH-1;y+=2) if(map[y][1]===0) candidates.push({x:0,y}); }
-  if(side===3){ for(let y=1;y<mapH-1;y+=2) if(map[y][mapW-2]===0) candidates.push({x:mapW-1,y}); }
-
-  door = candidates[Math.floor(Math.random()*candidates.length)];
-  map[door.y][door.x] = 2;
-
-  const ps = { mx:sx*2+1, my:sy*2+1 };
-  let ms = null;
-  for(let i=0;i<5000;i++){
-    const mx=randInt(1,mapW-2), my=randInt(1,mapH-2);
-    if(map[my][mx]!==0) continue;
-    if(Math.abs(mx-ps.mx)+Math.abs(my-ps.my) < 16) continue;
-    ms = {mx,my}; break;
-  }
-  if(!ms) ms={mx:1,my:1};
-  return {playerStart:ps, monsterStart:ms};
-}
-
-function isSolid(mx,my){
-  if(mx<0||my<0||mx>=mapW||my>=mapH) return true;
-  return map[my][mx]===1;
-}
-function circleRectCollide(cx,cy,r, rx,ry,rw,rh){
-  const nx = clamp(cx,rx,rx+rw), ny = clamp(cy,ry,ry+rh);
-  return (cx-nx)*(cx-nx)+(cy-ny)*(cy-ny) < r*r;
-}
-function collidesWall(x,y,r){
-  const minX=Math.floor((x-r)/tile), maxX=Math.floor((x+r)/tile);
-  const minY=Math.floor((y-r)/tile), maxY=Math.floor((y+r)/tile);
-  for(let my=minY; my<=maxY; my++){
-    for(let mx=minX; mx<=maxX; mx++){
-      if(!isSolid(mx,my)) continue;
-      if(circleRectCollide(x,y,r,mx*tile,my*tile,tile,tile)) return true;
-    }
-  }
-  return false;
-}
-function tryMove(ent,dx,dy,r){
-  let hit=false;
-  const nx=ent.x+dx;
-  if(!collidesWall(nx,ent.y,r)) ent.x=nx; else hit=true;
-  const ny=ent.y+dy;
-  if(!collidesWall(ent.x,ny,r)) ent.y=ny; else hit=true;
-  return hit;
-}
-
-function bfsPath(sx,sy,ex,ey){
-  const q=[{x:sx,y:sy}];
-  const vis=Array.from({length:mapH},()=>Array(mapW).fill(false));
-  const parent=Array.from({length:mapH},()=>Array(mapW).fill(null));
-  vis[sy][sx]=true;
+  mapW=cols*2+1;mapH=rows*2+1;map=Array.from({length:mapH},()=>Array(mapW).fill(1));
+  const visited=Array.from({length:rows},()=>Array(cols).fill(false)),sx=Math.floor(cols/2),sy=Math.floor(rows/2),stack=[{x:sx,y:sy}];visited[sy][sx]=true;map[sy*2+1][sx*2+1]=0;
   const dirs=[[1,0],[-1,0],[0,1],[0,-1]];
-  while(q.length){
-    const n=q.shift();
-    if(n.x===ex&&n.y===ey) break;
-    for(const [dx,dy] of dirs){
-      const nx=n.x+dx, ny=n.y+dy;
-      if(nx<0||ny<0||nx>=mapW||ny>=mapH) continue;
-      if(vis[ny][nx]||map[ny][nx]===1) continue;
-      vis[ny][nx]=true; parent[ny][nx]=n; q.push({x:nx,y:ny});
-    }
-  }
-  if(!vis[ey][ex]) return [];
-  const path=[]; let cur={x:ex,y:ey};
-  while(cur){ path.push(cur); cur=parent[cur.y][cur.x]; }
-  path.reverse(); return path;
+  while(stack.length){const c=stack[stack.length-1],shuffled=dirs.slice().sort(()=>Math.random()-.5);let moved=false;for(const[dx,dy]of shuffled){const nx=c.x+dx,ny=c.y+dy;if(nx<0||ny<0||nx>=cols||ny>=rows||visited[ny][nx])continue;visited[ny][nx]=true;map[ny*2+1][nx*2+1]=0;map[c.y*2+1+dy][c.x*2+1+dx]=0;stack.push({x:nx,y:ny});moved=true;break;}if(!moved)stack.pop();}
+  // Add loops across the maze, then specifically open routes out of cul-de-sacs.
+  for(let i=0;i<Math.floor(cols*rows*.5);i++){if(Math.random()<.5){const x=randInt(2,mapW-3),y=randInt(1,mapH-2);if(x%2===0&&y%2===1&&map[y][x]===1&&map[y][x-1]===0&&map[y][x+1]===0)map[y][x]=0;}else{const x=randInt(1,mapW-2),y=randInt(2,mapH-3);if(x%2===1&&y%2===0&&map[y][x]===1&&map[y-1][x]===0&&map[y+1][x]===0)map[y][x]=0;}}
+  // Reduce dead ends by connecting a dead-end cell to another nearby corridor.
+  for(let pass=0;pass<3;pass++){const dead=[];for(let y=0;y<rows;y++)for(let x=0;x<cols;x++)if(cellDegree(x,y)===1)dead.push({x,y});for(const c of dead){if(cellDegree(c.x,c.y)!==1)continue;const options=[];for(const[dx,dy]of dirs){const nx=c.x+dx,ny=c.y+dy,wx=c.x*2+1+dx,wy=c.y*2+1+dy;if(nx>=0&&ny>=0&&nx<cols&&ny<rows&&map[wy][wx]===1)options.push({x:nx,y:ny,wx,wy,degree:cellDegree(nx,ny)});}options.sort((a,b)=>a.degree-b.degree);if(options.length) {const pick=options[0];map[pick.wy][pick.wx]=0;}}}
+  for(let i=0;i<3;i++){const cx=randInt(3,mapW-4),cy=randInt(3,mapH-4);for(let y=-1;y<=1;y++)for(let x=-1;x<=1;x++){const xx=cx+x,yy=cy+y;if(xx>0&&yy>0&&xx<mapW-1&&yy<mapH-1)map[yy][xx]=0;}}
+  const side=randInt(0,3),candidates=[];if(side===0){for(let x=1;x<mapW-1;x+=2)if(map[1][x]===0)candidates.push({x,y:0});}if(side===1){for(let x=1;x<mapW-1;x+=2)if(map[mapH-2][x]===0)candidates.push({x,y:mapH-1});}if(side===2){for(let y=1;y<mapH-1;y+=2)if(map[y][1]===0)candidates.push({x:0,y});}if(side===3){for(let y=1;y<mapH-1;y+=2)if(map[y][mapW-2]===0)candidates.push({x:mapW-1,y});}
+  door=candidates[randInt(0,candidates.length-1)];map[door.y][door.x]=2;
+  // Spawn exactly at the maze's central cell. Place the hunter far away by corridor distance.
+  const ps={mx:sx*2+1,my:sy*2+1},distances=bfsPath(ps.mx,ps.my,-1,-1,true),far=[];for(let y=1;y<mapH-1;y+=2)for(let x=1;x<mapW-1;x+=2)if(map[y][x]===0&&distances[y][x]>=18)far.push({mx:x,my:y});
+  const ms=far.length?far[randInt(0,far.length-1)]:{mx:1,my:1};return{playerStart:ps,monsterStart:ms};
 }
-
-// ===== Gameplay =====
-function wakeMonster(){
-  if(!monster.awake){
-    monster.awake=true;
-    monster.path=[]; monster.pathIdx=0; monster.recalc=0;
-  }
+function isSolid(mx,my){return mx<0||my<0||mx>=mapW||my>=mapH||map[my][mx]===1;}
+function circleRectCollide(cx,cy,r,rx,ry,rw,rh){const nx=clamp(cx,rx,rx+rw),ny=clamp(cy,ry,ry+rh);return(cx-nx)**2+(cy-ny)**2<r*r;}
+function collidesWall(x,y,r){for(let my=Math.floor((y-r)/tile);my<=Math.floor((y+r)/tile);my++)for(let mx=Math.floor((x-r)/tile);mx<=Math.floor((x+r)/tile);mx++)if(isSolid(mx,my)&&circleRectCollide(x,y,r,mx*tile,my*tile,tile,tile))return true;return false;}
+function tryMove(ent,dx,dy,r){let hit=false,nx=ent.x+dx;if(!collidesWall(nx,ent.y,r))ent.x=nx;else hit=true;let ny=ent.y+dy;if(!collidesWall(ent.x,ny,r))ent.y=ny;else hit=true;return hit;}
+function bfsPath(sx,sy,ex,ey,returnDistances=false){const q=[{x:sx,y:sy}],vis=Array.from({length:mapH},()=>Array(mapW).fill(false)),parent=Array.from({length:mapH},()=>Array(mapW).fill(null)),d=Array.from({length:mapH},()=>Array(mapW).fill(-1));if(sx<0||sy<0||sx>=mapW||sy>=mapH)return d;vis[sy][sx]=true;d[sy][sx]=0;const dirs=[[1,0],[-1,0],[0,1],[0,-1]];let head=0;while(head<q.length){const n=q[head++];if(n.x===ex&&n.y===ey)break;for(const[dx,dy]of dirs){const nx=n.x+dx,ny=n.y+dy;if(nx<0||ny<0||nx>=mapW||ny>=mapH||vis[ny][nx]||map[ny][nx]===1)continue;vis[ny][nx]=true;d[ny][nx]=d[n.y][n.x]+1;parent[ny][nx]=n;q.push({x:nx,y:ny});}}if(returnDistances)return d;if(ex<0||ey<0||!vis[ey][ex])return[];const path=[];let cur={x:ex,y:ey};while(cur){path.push(cur);cur=parent[cur.y][cur.x];}return path.reverse();}
+function wakeMonster(targetX=player.x,targetY=player.y){if(!monster.awake){monster.awake=true;monster.path=[];monster.pathIdx=0;monster.recalc=0;}monster.target={x:targetX,y:targetY};monster.targetTimer=5;}
+function fireSonar(type){if(gameState!=='playing')return;const narrow=type==='Q',cost=narrow?12:10;if(player.pfc<cost)return;player.pfc-=cost;const aim=Math.atan2(mouse.y-canvas.height/2,mouse.x-canvas.width/2);sonarWaves.push({type,x:player.x,y:player.y,angle:aim,spread:narrow?Math.PI/8:Math.PI*.8,r:2,speed:narrow?12:3,maxR:narrow?430:940,thickness:narrow?14:50,color:narrow?[80,190,255]:[75,255,205]});if(monster.awake)monster.target={x:player.x,y:player.y};}
+function updateSonar(dt){for(let i=sonarWaves.length-1;i>=0;i--){const w=sonarWaves[i];w.r+=w.speed*dt*60;if(w.r>w.maxR){sonarWaves.splice(i,1);continue;}const dx=monster.x-w.x,dy=monster.y-w.y,d=Math.hypot(dx,dy),a=Math.atan2(dy,dx);if(Math.abs(angleDiff(a,w.angle))<=w.spread/2&&d>=w.r-w.thickness-monster.r&&d<=w.r+monster.r+2){wakeMonster();monster.revealTimer=Math.max(monster.revealTimer,90);}const samples=w.type==='Q'?44:24;for(let s=0;s<=samples;s++){const t=-w.spread/2+s/samples*w.spread,px=w.x+Math.cos(w.angle+t)*w.r,py=w.y+Math.sin(w.angle+t)*w.r;if(collidesWall(px,py,1.6)&&Math.random()<(w.type==='Q'?.84:.28))glowDots.push({x:px,y:py,a:1,size:w.type==='Q'?2.8:1.8,color:w.type==='Q'?'100,200,255':'75,255,205'});}}}
+function spawnCrashRipple(x,y){noiseRipples.push({x,y,r:2,speed:5,max:430});}
+function spawnExitPulse(){const d=toWorld(door.x,door.y);exitPulses.push({x:d.x,y:d.y,r:2,speed:2.5,max:1200,alpha:.62});}
+function updateExitPulses(dt){exitPulseTimer-=dt;if(exitPulseTimer<=0){spawnExitPulse();exitPulseTimer=4+Math.random()*2.5;}for(let i=exitPulses.length-1;i>=0;i--){const p=exitPulses[i];p.r+=p.speed*dt*60;if(p.r>p.max)exitPulses.splice(i,1);}}
+function spawnMonsterPulse(){monsterPulses.push({x:monster.x,y:monster.y,r:2,speed:1.35,max:280,alpha:.3});}
+function updateMonsterPulses(dt,moving){if(monster.awake&&moving){monsterPulseTimer-=dt;if(monsterPulseTimer<=0){spawnMonsterPulse();monsterPulseTimer=.9;}}for(let i=monsterPulses.length-1;i>=0;i--){const p=monsterPulses[i];p.r+=p.speed*dt*60;if(p.r>p.max)monsterPulses.splice(i,1);}}
+function initGame(){const g=generateMaze(),p=toWorld(g.playerStart.mx,g.playerStart.my),m=toWorld(g.monsterStart.mx,g.monsterStart.my);player={x:p.x,y:p.y,r:7,speed:2.45,sprintSpeed:4.05,core:100,pfc:100,vx:0,vy:0};monster={x:m.x,y:m.y,r:11,awake:false,speed:2.12,path:[],pathIdx:0,recalc:0,revealTimer:0,target:{x:p.x,y:p.y},targetTimer:0};sonarWaves=[];glowDots=[];noiseRipples=[];exitPulses=[];monsterPulses=[];exitPulseTimer=1.8;monsterPulseTimer=.3;gameState='playing';msgEl.textContent='';contactEl.textContent='QUIET';runTrail=[];monsterTrail=[];trailTimer=0;monsterTrailTimer=0;replayClock=0;}
+function endRun(text){if(gameState!=='playing')return;gameState=text.includes('ESCAPED')?'won':'lost';msgEl.textContent=text+' — Press R';replayClock=0;}
+function update(dt){if(gameState!=='playing'){replayClock+=dt;return;}
+  let mx=0,my=0;if(keys.w)my--;if(keys.s)my++;if(keys.a)mx--;if(keys.d)mx++;const moving=mx!==0||my!==0;if(moving){const l=Math.hypot(mx,my);mx/=l;my/=l;}const sprinting=keys.shift&&player.core>0&&moving,speed=sprinting?player.sprintSpeed:player.speed,oldX=player.x,oldY=player.y,hit=tryMove(player,mx*speed*dt*60,my*speed*dt*60,player.r);player.vx=(player.x-oldX)/Math.max(dt,.001);player.vy=(player.y-oldY)/Math.max(dt,.001);
+  if(moving)player.core=clamp(player.core-(sprinting?13:6.5)*dt,0,100);else player.core=clamp(player.core+11*dt,0,100);player.pfc=clamp(player.pfc+14*dt,0,100);
+  const now=performance.now();if(hit&&now-lastCrash>160){lastCrash=now;spawnCrashRipple(player.x,player.y);if(monster.awake)wakeMonster(player.x,player.y);}
+  // Running and sprinting are audible: the hunter updates its bearing, while quiet movement can break contact.
+  if(monster.awake&&moving&&(sprinting||Math.random()<.055))wakeMonster(player.x,player.y);
+  for(let i=noiseRipples.length-1;i>=0;i--){const n=noiseRipples[i];n.r+=n.speed*dt*60;if(n.r>n.max)noiseRipples.splice(i,1);if(!monster.awake&&!n.heard&&dist(n.x,n.y,monster.x,monster.y)<=n.r+monster.r){n.heard=true;wakeMonster(n.x,n.y);monster.revealTimer=Math.max(monster.revealTimer,85);}}
+  updateSonar(dt);updateExitPulses(dt);for(let i=glowDots.length-1;i>=0;i--){glowDots[i].a*=.9965;if(glowDots[i].a<.02)glowDots.splice(i,1);}
+  let monsterMoved=false;if(monster.awake){monster.targetTimer-=dt;if(monster.targetTimer<=0){monster.target={x:monster.target.x,y:monster.target.y};}monster.recalc-=dt;const mc=worldToMap(monster.x,monster.y);let target=monster.target;
+    // Predict a short lead when the player is making noise, helping the hunter cut off routes rather than trail behind.
+    if(monster.targetTimer>0&&dist(player.x,player.y,target.x,target.y)<tile*5){const lead=clamp(dist(monster.x,monster.y,player.x,player.y)/monster.speed/60,0,.65);target={x:player.x+player.vx*lead,y:player.y+player.vy*lead};}
+    const tc=worldToMap(target.x,target.y);if(monster.recalc<=0){monster.path=bfsPath(mc.mx,mc.my,tc.mx,tc.my);monster.pathIdx=Math.min(1,Math.max(0,monster.path.length-1));monster.recalc=.2;}
+    if(monster.path.length>1){const idx=clamp(monster.pathIdx,1,monster.path.length-1),wp=toWorld(monster.path[idx].x,monster.path[idx].y),dx=wp.x-monster.x,dy=wp.y-monster.y,d=Math.hypot(dx,dy);if(d<5)monster.pathIdx=clamp(monster.pathIdx+1,1,monster.path.length-1);else{const bx=monster.x,by=monster.y;tryMove(monster,dx/d*monster.speed*dt*60,dy/d*monster.speed*dt*60,monster.r);monsterMoved=dist(bx,by,monster.x,monster.y)>.2;}}
+    if(dist(player.x,player.y,monster.x,monster.y)<player.r+monster.r+2)endRun('CAPTURED BY THE ECHO HUNTER');}
+  if(monster.revealTimer>0)monster.revealTimer--;updateMonsterPulses(dt,monsterMoved);contactEl.textContent=monster.awake?'ACTIVE':'QUIET';const pm=worldToMap(player.x,player.y);if(pm.mx===door.x&&pm.my===door.y)endRun('ESCAPED');
+  trailTimer-=dt;if(trailTimer<=0){runTrail.push({x:player.x,y:player.y});trailTimer=.08;}if(monster.awake){monsterTrailTimer-=dt;if(monsterTrailTimer<=0){monsterTrail.push({x:monster.x,y:monster.y});monsterTrailTimer=.1;}}coreFill.style.width=player.core+'%';pfcFill.style.width=player.pfc+'%';
 }
-
-function fireSonar(type){
-  if(gameState!=="playing") return;
-  const isQ = type==="Q";
-  const cost = isQ ? 12 : 10;
-  if(player.pfc < cost) return;
-  player.pfc -= cost;
-
-  const aim = Math.atan2(mouse.y-canvas.height/2, mouse.x-canvas.width/2);
-  sonarWaves.push({
-    type, x:player.x, y:player.y, angle:aim,
-    spread: isQ ? Math.PI/8 : Math.PI*0.8,
-    r:2,
-    speed: isQ ? 12 : 3.0,
-    maxR: isQ ? 430 : 940,
-    thickness: isQ ? 14 : 50,
-    color: isQ ? [70,175,255] : [255,70,70]
-  });
-}
-
-function updateSonar(dt){
-  for(let i=sonarWaves.length-1;i>=0;i--){
-    const w=sonarWaves[i];
-    w.r += w.speed*dt*60;
-    if(w.r > w.maxR){ sonarWaves.splice(i,1); continue; }
-
-    const dx=monster.x-w.x, dy=monster.y-w.y;
-    const d=Math.hypot(dx,dy), a=Math.atan2(dy,dx);
-    if(Math.abs(angleDiff(a,w.angle)) <= w.spread/2 &&
-       d >= (w.r-w.thickness-monster.r) && d <= (w.r+monster.r+2)){
-      wakeMonster();
-      monster.revealTimer = Math.max(monster.revealTimer, 90);
-    }
-
-    const samples = w.type==="Q" ? 44 : 24;
-    for(let s=0;s<=samples;s++){
-      const t=-w.spread/2 + (s/samples)*w.spread;
-      const px=w.x+Math.cos(w.angle+t)*w.r;
-      const py=w.y+Math.sin(w.angle+t)*w.r;
-      if(collidesWall(px,py,1.6)){
-        if(Math.random() < (w.type==="Q" ? 0.84 : 0.28)){
-          glowDots.push({
-            x:px,y:py,a:1,size:w.type==="Q"?2.8:1.8,
-            color:w.type==="Q"?"100,200,255":"255,90,90"
-          });
-        }
-      }
-    }
-  }
-}
-
-function spawnCrashRipple(x,y){ noiseRipples.push({x,y,r:2,speed:5,max:430}); }
-
-function spawnExitPulse(){
-  const d = toWorld(door.x,door.y);
-  exitPulses.push({x:d.x,y:d.y,r:2,speed:2.5,max:1200,alpha:0.62});
-}
-function updateExitPulses(dt){
-  exitPulseTimer -= dt;
-  if(exitPulseTimer <= 0){
-    spawnExitPulse();
-    exitPulseTimer = 4 + Math.random()*2.5;
-  }
-  for(let i=exitPulses.length-1;i>=0;i--){
-    const p=exitPulses[i];
-    p.r += p.speed*dt*60;
-    if(p.r > p.max) exitPulses.splice(i,1);
-  }
-}
-
-// Monster passive sonar pulses while moving
-function spawnMonsterPulse(){
-  monsterPulses.push({
-    x: monster.x, y: monster.y,
-    r: 2, speed: 1.35, max: 280, alpha: 0.26
-  });
-}
-function updateMonsterPulses(dt, movingMonster){
-  if(monster.awake && movingMonster){
-    monsterPulseTimer -= dt;
-    if(monsterPulseTimer <= 0){
-      spawnMonsterPulse();
-      monsterPulseTimer = 0.9; // slow pulse interval
-    }
-  }
-  for(let i=monsterPulses.length-1;i>=0;i--){
-    const p=monsterPulses[i];
-    p.r += p.speed*dt*60;
-    if(p.r > p.max) monsterPulses.splice(i,1);
-  }
-}
-
-function initGame(){
-  const g=generateMaze();
-  const p=toWorld(g.playerStart.mx,g.playerStart.my);
-  const m=toWorld(g.monsterStart.mx,g.monsterStart.my);
-
-  player={x:p.x,y:p.y,r:7,speed:2.45,sprintSpeed:4.05,core:100,pfc:100};
-
-  // Slower monster
-  monster={x:m.x,y:m.y,r:11,awake:false,speed:2.08,path:[],pathIdx:0,recalc:0,revealTimer:0};
-
-  sonarWaves=[]; glowDots=[]; noiseRipples=[]; exitPulses=[]; monsterPulses=[];
-  exitPulseTimer=1.8;
-  monsterPulseTimer=0.3;
-
-  gameState="playing";
-  msgEl.textContent="";
-
-  runTrail=[]; monsterTrail=[]; trailTimer=0; monsterTrailTimer=0; replayClock=0;
-}
-
-function endRun(text){
-  if(gameState!=="playing") return;
-  gameState = text.includes("ESCAPED") ? "won" : "lost";
-  msgEl.textContent = text + " — Press R";
-  replayClock = 0;
-}
-
-function update(dt){
-  if(gameState!=="playing"){
-    replayClock += dt;
-    return;
-  }
-
-  // player input
-  let mx=0,my=0;
-  if(keys["w"])my--; if(keys["s"])my++;
-  if(keys["a"])mx--; if(keys["d"])mx++;
-  const moving = mx!==0 || my!==0;
-  if(moving){ const l=Math.hypot(mx,my); mx/=l; my/=l; }
-
-  const sprinting = keys["shift"] && player.core>0 && moving;
-  const speed = sprinting ? player.sprintSpeed : player.speed;
-  const hit = tryMove(player,mx*speed*dt*60,my*speed*dt*60,player.r);
-
-  if(moving) player.core = clamp(player.core - (sprinting?13:6.5)*dt,0,100);
-  else player.core = clamp(player.core + 11*dt,0,100);
-  player.pfc = clamp(player.pfc + 14*dt,0,100);
-
-  const now=performance.now();
-  if(hit && now-lastCrash>160){
-    lastCrash=now;
-    spawnCrashRipple(player.x,player.y);
-  }
-
-  for(let i=noiseRipples.length-1;i>=0;i--){
-    const n=noiseRipples[i];
-    n.r += n.speed*dt*60;
-    if(n.r>n.max) noiseRipples.splice(i,1);
-    if(!monster.awake && dist(n.x,n.y,monster.x,monster.y)<=n.r+monster.r){
-      wakeMonster(); monster.revealTimer=Math.max(monster.revealTimer,85);
-    }
-  }
-
-  updateSonar(dt);
-  updateExitPulses(dt);
-
-  for(let i=glowDots.length-1;i>=0;i--){
-    glowDots[i].a *= 0.9965;
-    if(glowDots[i].a < 0.02) glowDots.splice(i,1);
-  }
-
-  // monster chase
-  let monsterMoved = false;
-  if(monster.awake){
-    monster.recalc -= dt;
-    const mc=worldToMap(monster.x,monster.y), pc=worldToMap(player.x,player.y);
-    if(monster.recalc<=0){
-      monster.path = bfsPath(mc.mx,mc.my,pc.mx,pc.my);
-      monster.pathIdx = Math.min(1,Math.max(0,monster.path.length-1));
-      monster.recalc = 0.22;
-    }
-    if(monster.path.length>1){
-      const idx=clamp(monster.pathIdx,1,monster.path.length-1);
-      const wp=toWorld(monster.path[idx].x,monster.path[idx].y);
-      const dx=wp.x-monster.x, dy=wp.y-monster.y;
-      const d=Math.hypot(dx,dy);
-      if(d<5) monster.pathIdx = clamp(monster.pathIdx+1,1,monster.path.length-1);
-      else{
-        const beforeX = monster.x, beforeY = monster.y;
-        tryMove(monster,(dx/d)*monster.speed*dt*60,(dy/d)*monster.speed*dt*60,monster.r);
-        monsterMoved = dist(beforeX,beforeY,monster.x,monster.y) > 0.2;
-      }
-    }
-
-    if(dist(player.x,player.y,monster.x,monster.y)<player.r+monster.r+2){
-      endRun("CAPTURED BY THE ECHO HUNTER");
-    }
-  }
-  if(monster.revealTimer>0) monster.revealTimer--;
-
-  updateMonsterPulses(dt, monsterMoved);
-
-  const pm=worldToMap(player.x,player.y);
-  if(pm.mx===door.x&&pm.my===door.y) endRun("ESCAPED");
-
-  // trail recording
-  trailTimer -= dt;
-  if(trailTimer<=0){
-    runTrail.push({x:player.x,y:player.y});
-    trailTimer = 0.08;
-  }
-  if(monster.awake){
-    monsterTrailTimer -= dt;
-    if(monsterTrailTimer<=0){
-      monsterTrail.push({x:monster.x,y:monster.y});
-      monsterTrailTimer = 0.10;
-    }
-  }
-
-  coreFill.style.width = player.core + "%";
-  pfcFill.style.width = player.pfc + "%";
-}
-
-// ===== Draw =====
-function drawSonarSector(w,camX,camY){
-  const cx=w.x-camX, cy=w.y-camY;
-  const a1=w.angle-w.spread/2, a2=w.angle+w.spread/2;
-  const [r,g,b]=w.color;
-  ctx.save();
-  ctx.globalCompositeOperation="lighter";
-  const layers = w.type==="Q" ? 3 : 6;
-  for(let i=0;i<layers;i++){
-    const rr=w.r-i*(w.thickness*0.5);
-    if(rr<=2) continue;
-    const th=w.thickness*(1-i*0.10);
-    const alpha = Math.max(0.02,(w.type==="Q"?0.16:0.20)-i*(w.type==="Q"?0.05:0.025));
-    ctx.beginPath();
-    ctx.arc(cx,cy,rr,a1,a2);
-    ctx.arc(cx,cy,Math.max(0,rr-th),a2,a1,true);
-    ctx.closePath();
-    ctx.fillStyle=`rgba(${r},${g},${b},${alpha})`;
-    ctx.fill();
-  }
-  ctx.strokeStyle=`rgba(${r},${g},${b},0.78)`;
-  ctx.lineWidth=2;
-  ctx.beginPath();
-  ctx.arc(cx,cy,w.r,a1,a2);
-  ctx.stroke();
-  ctx.restore();
-}
-
-function drawAmbientVision(camX,camY){
-  const visionRadius = 110;
-  const hardRadius = 70;
-  const px=player.x, py=player.y;
-
-  const minX=Math.max(0,Math.floor((px-visionRadius)/tile)-1);
-  const maxX=Math.min(mapW-1,Math.floor((px+visionRadius)/tile)+1);
-  const minY=Math.max(0,Math.floor((py-visionRadius)/tile)-1);
-  const maxY=Math.min(mapH-1,Math.floor((py+visionRadius)/tile)+1);
-
-  for(let y=minY;y<=maxY;y++){
-    for(let x=minX;x<=maxX;x++){
-      const tx=x*tile, ty=y*tile;
-      const cx=tx+tile*0.5, cy=ty+tile*0.5;
-      const d=dist(px,py,cx,cy);
-      if(d>visionRadius) continue;
-      if(map[y][x]===1){
-        let a = d<hardRadius ? 0.18 : 0.18*(1-(d-hardRadius)/(visionRadius-hardRadius));
-        a = clamp(a,0.03,0.18);
-        ctx.fillStyle=`rgba(100,170,100,${a})`;
-        ctx.fillRect(tx-camX,ty-camY,tile,tile);
-        ctx.strokeStyle=`rgba(130,220,130,${a*0.8})`;
-        ctx.strokeRect(tx-camX+0.5,ty-camY+0.5,tile-1,tile-1);
-      }
-    }
-  }
-}
-
-function drawMiniReplay(){
-  if(gameState==="playing") return;
-
-  const w=220,h=220,pad=10;
-  const x = canvas.width - w - 14;
-  const y = 14;
-  const worldW = mapW*tile, worldH = mapH*tile;
-  const sx = (wx)=> x+pad + (wx/worldW)*(w-pad*2);
-  const sy = (wy)=> y+pad + (wy/worldH)*(h-pad*2);
-
-  ctx.save();
-  ctx.fillStyle="rgba(5,20,5,0.88)";
-  ctx.fillRect(x,y,w,h);
-  ctx.strokeStyle="rgba(140,255,140,0.35)";
-  ctx.strokeRect(x+0.5,y+0.5,w-1,h-1);
-  ctx.fillStyle="rgba(150,255,150,0.9)";
-  ctx.font="11px Consolas";
-  ctx.fillText("COURSE REPLAY", x+10, y+14);
-
-  ctx.fillStyle="rgba(70,120,70,0.45)";
-  const miniW=w-pad*2, miniH=h-pad*2;
-  const cw=miniW/mapW, ch=miniH/mapH;
-  for(let my=0;my<mapH;my++){
-    for(let mx=0;mx<mapW;mx++){
-      if(map[my][mx]===1){
-        ctx.fillRect(x+pad+mx*cw, y+pad+my*ch, cw, ch);
-      }
-    }
-  }
-
-  if(runTrail.length>1){
-    ctx.beginPath();
-    ctx.strokeStyle="rgba(120,220,255,0.30)";
-    ctx.lineWidth=1.2;
-    ctx.moveTo(sx(runTrail[0].x), sy(runTrail[0].y));
-    for(let i=1;i<runTrail.length;i++) ctx.lineTo(sx(runTrail[i].x), sy(runTrail[i].y));
-    ctx.stroke();
-  }
-  if(monsterTrail.length>1){
-    ctx.beginPath();
-    ctx.strokeStyle="rgba(255,90,90,0.30)";
-    ctx.lineWidth=1.2;
-    ctx.moveTo(sx(monsterTrail[0].x), sy(monsterTrail[0].y));
-    for(let i=1;i<monsterTrail.length;i++) ctx.lineTo(sx(monsterTrail[i].x), sy(monsterTrail[i].y));
-    ctx.stroke();
-  }
-
-  const pIdx = Math.min(runTrail.length-1, Math.floor(replayClock*12));
-  if(pIdx>=0 && runTrail.length){
-    ctx.fillStyle="rgba(120,220,255,0.95)";
-    ctx.beginPath();
-    ctx.arc(sx(runTrail[pIdx].x), sy(runTrail[pIdx].y), 2.8, 0, Math.PI*2);
-    ctx.fill();
-  }
-  const mIdx = Math.min(monsterTrail.length-1, Math.floor(replayClock*12));
-  if(mIdx>=0 && monsterTrail.length){
-    ctx.fillStyle="rgba(255,90,90,0.95)";
-    ctx.beginPath();
-    ctx.arc(sx(monsterTrail[mIdx].x), sy(monsterTrail[mIdx].y), 2.8, 0, Math.PI*2);
-    ctx.fill();
-  }
-
-  const d = toWorld(door.x,door.y);
-  ctx.strokeStyle="rgba(120,255,200,0.9)";
-  ctx.beginPath();
-  ctx.arc(sx(d.x),sy(d.y),4,0,Math.PI*2);
-  ctx.stroke();
-  ctx.restore();
-}
-
-function draw(){
-  ctx.fillStyle="#000";
-  ctx.fillRect(0,0,canvas.width,canvas.height);
-
-  const camX = player.x - canvas.width/2;
-  const camY = player.y - canvas.height/2;
-  const sx=x=>x-camX, sy=y=>y-camY;
-
-  drawAmbientVision(camX,camY);
-
-  // Exit pulses
-  for(const p of exitPulses){
-    const a=Math.max(0,p.alpha*(1-p.r/p.max));
-    ctx.strokeStyle=`rgba(100,255,220,${a})`;
-    ctx.lineWidth=2.2;
-    ctx.beginPath();
-    ctx.arc(sx(p.x),sy(p.y),p.r,0,Math.PI*2);
-    ctx.stroke();
-  }
-
-  // Strong constant exit glow (always lit)
-  const ex = toWorld(door.x, door.y);
-  const exs = sx(ex.x), eys = sy(ex.y);
-  const g = ctx.createRadialGradient(exs, eys, 2, exs, eys, 70);
-  g.addColorStop(0, "rgba(120,255,220,0.75)");
-  g.addColorStop(0.45, "rgba(80,220,190,0.25)");
-  g.addColorStop(1, "rgba(80,220,190,0)");
-  ctx.fillStyle = g;
-  ctx.beginPath();
-  ctx.arc(exs, eys, 70, 0, Math.PI*2);
-  ctx.fill();
-  ctx.strokeStyle = "rgba(140,255,220,0.85)";
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.arc(exs, eys, 10, 0, Math.PI*2);
-  ctx.stroke();
-
-  for(const gdot of glowDots){
-    ctx.fillStyle=`rgba(${gdot.color},${gdot.a})`;
-    ctx.beginPath();
-    ctx.arc(sx(gdot.x),sy(gdot.y),gdot.size||2,0,Math.PI*2);
-    ctx.fill();
-  }
-
-  for(const w of sonarWaves) drawSonarSector(w,camX,camY);
-
-  for(const n of noiseRipples){
-    ctx.strokeStyle=`rgba(255,220,90,${Math.max(0,1-n.r/n.max)*0.85})`;
-    ctx.lineWidth=2;
-    ctx.beginPath();
-    ctx.arc(sx(n.x),sy(n.y),n.r,0,Math.PI*2);
-    ctx.stroke();
-  }
-
-  // Monster moving sonar rings (visible presence)
-  for(const p of monsterPulses){
-    const a = Math.max(0, p.alpha*(1-p.r/p.max));
-    ctx.strokeStyle = `rgba(255,80,80,${a})`;
-    ctx.lineWidth = 1.8;
-    ctx.beginPath();
-    ctx.arc(sx(p.x), sy(p.y), p.r, 0, Math.PI*2);
-    ctx.stroke();
-  }
-
-  // Monster: faintly visible when awake + strong flicker on detection
-  if(monster.awake){
-    ctx.fillStyle = "rgba(255,70,70,0.18)";
-    ctx.beginPath();
-    ctx.arc(sx(monster.x), sy(monster.y), 5.5, 0, Math.PI*2);
-    ctx.fill();
-  }
-  if(monster.revealTimer>0){
-    const flick=0.45+Math.random()*0.55;
-    const rr=14+Math.sin(performance.now()*0.015)*4;
-    ctx.strokeStyle=`rgba(255,60,60,${flick})`;
-    ctx.beginPath();
-    ctx.arc(sx(monster.x),sy(monster.y),rr,0,Math.PI*2);
-    ctx.stroke();
-  }
-
-  // Cold-war radar reticle + sweep
-  const cx=canvas.width/2, cy=canvas.height/2;
-  const aim=Math.atan2(mouse.y-cy,mouse.x-cx);
-  const sweep = (performance.now()*0.0015)%(Math.PI*2);
-
-  ctx.save();
-  ctx.globalCompositeOperation="lighter";
-  [30,55,82].forEach((r,i)=>{
-    ctx.strokeStyle=`rgba(120,255,120,${0.14-i*0.03})`;
-    ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.stroke();
-  });
-
-  ctx.strokeStyle="rgba(120,255,120,0.22)";
-  ctx.lineWidth=2;
-  ctx.beginPath();
-  ctx.moveTo(cx,cy);
-  ctx.lineTo(cx+Math.cos(sweep)*120, cy+Math.sin(sweep)*120);
-  ctx.stroke();
-
-  ctx.strokeStyle="rgba(180,255,200,0.55)";
-  ctx.lineWidth=1.3;
-  ctx.beginPath();
-  ctx.moveTo(cx,cy);
-  ctx.lineTo(cx+Math.cos(aim)*110, cy+Math.sin(aim)*110);
-  ctx.stroke();
-  ctx.restore();
-
-  ctx.fillStyle="#fff";
-  ctx.beginPath();
-  ctx.arc(cx,cy,player.r,0,Math.PI*2);
-  ctx.fill();
-
-  // scanlines
-  ctx.save();
-  ctx.globalAlpha = 0.07;
-  ctx.strokeStyle = "#8fff8f";
-  for(let y=0; y<canvas.height; y+=3){
-    ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(canvas.width,y); ctx.stroke();
-  }
-  ctx.restore();
-
-  drawMiniReplay();
-}
-
-function loop(now){
-  const dt=Math.min(0.033,(now-lastTime)/1000);
-  lastTime=now;
-  update(dt);
-  draw();
-  requestAnimationFrame(loop);
-}
-
-initGame();
-requestAnimationFrame(loop);
+function drawSonarSector(w,camX,camY){const cx=w.x-camX,cy=w.y-camY,a1=w.angle-w.spread/2,a2=w.angle+w.spread/2,[r,g,b]=w.color;ctx.save();ctx.globalCompositeOperation='lighter';const layers=w.type==='Q'?3:6;for(let i=0;i<layers;i++){const rr=w.r-i*w.thickness*.5;if(rr<=2)continue;const th=w.thickness*(1-i*.1),alpha=Math.max(.02,(w.type==='Q'?.16:.2)-i*(w.type==='Q'?.05:.025));ctx.beginPath();ctx.arc(cx,cy,rr,a1,a2);ctx.arc(cx,cy,Math.max(0,rr-th),a2,a1,true);ctx.closePath();ctx.fillStyle=`rgba(${r},${g},${b},${alpha})`;ctx.fill();}ctx.strokeStyle=`rgba(${r},${g},${b},.8)`;ctx.lineWidth=2;ctx.beginPath();ctx.arc(cx,cy,w.r,a1,a2);ctx.stroke();ctx.restore();}
+function drawAmbientVision(camX,camY){const radius=155,px=player.x,py=player.y,minX=Math.max(0,Math.floor((px-radius)/tile)-1),maxX=Math.min(mapW-1,Math.floor((px+radius)/tile)+1),minY=Math.max(0,Math.floor((py-radius)/tile)-1),maxY=Math.min(mapH-1,Math.floor((py+radius)/tile)+1);for(let y=minY;y<=maxY;y++)for(let x=minX;x<=maxX;x++){const tx=x*tile,ty=y*tile,d=dist(px,py,tx+tile/2,ty+tile/2);if(d>radius)continue;if(map[y][x]===1){const a=clamp(.19*(1-d/radius),.025,.17);ctx.fillStyle=`rgba(50,150,145,${a})`;ctx.fillRect(tx-camX,ty-camY,tile,tile);ctx.strokeStyle=`rgba(95,220,200,${a*.8})`;ctx.strokeRect(tx-camX+.5,ty-camY+.5,tile-1,tile-1);}}}
+function drawMiniReplay(){if(gameState==='playing')return;const w=220,h=220,pad=10,x=canvas.width-w-14,y=14,worldW=mapW*tile,worldH=mapH*tile,sx=wx=>x+pad+wx/worldW*(w-pad*2),sy=wy=>y+pad+wy/worldH*(h-pad*2);ctx.save();ctx.fillStyle='rgba(2,20,25,.92)';ctx.fillRect(x,y,w,h);ctx.strokeStyle='rgba(112,244,220,.4)';ctx.strokeRect(x+.5,y+.5,w-1,h-1);ctx.fillStyle='#78d9c7';ctx.font='11px Consolas';ctx.fillText('TRACK RECONSTRUCTION',x+10,y+14);const cw=(w-pad*2)/mapW,ch=(h-pad*2)/mapH;ctx.fillStyle='rgba(67,137,129,.5)';for(let my=0;my<mapH;my++)for(let mx=0;mx<mapW;mx++)if(map[my][mx]===1)ctx.fillRect(x+pad+mx*cw,y+pad+my*ch,cw,ch);if(runTrail.length>1){ctx.beginPath();ctx.strokeStyle='rgba(100,220,255,.4)';ctx.moveTo(sx(runTrail[0].x),sy(runTrail[0].y));for(let i=1;i<runTrail.length;i++)ctx.lineTo(sx(runTrail[i].x),sy(runTrail[i].y));ctx.stroke();}if(monsterTrail.length>1){ctx.beginPath();ctx.strokeStyle='rgba(255,110,90,.5)';ctx.moveTo(sx(monsterTrail[0].x),sy(monsterTrail[0].y));for(let i=1;i<monsterTrail.length;i++)ctx.lineTo(sx(monsterTrail[i].x),sy(monsterTrail[i].y));ctx.stroke();}const d=toWorld(door.x,door.y);ctx.fillStyle='#8fffe0';ctx.fillRect(sx(d.x)-2,sy(d.y)-2,4,4);ctx.restore();}
+function draw(){ctx.fillStyle='#020b10';ctx.fillRect(0,0,canvas.width,canvas.height);const camX=player.x-canvas.width/2,camY=player.y-canvas.height/2,sx=x=>x-camX,sy=y=>y-camY;drawAmbientVision(camX,camY);
+  // Submarine scope rings, bearing ticks, and moving sweep.
+  const cx=canvas.width/2,cy=canvas.height/2;ctx.save();ctx.globalCompositeOperation='lighter';ctx.strokeStyle='rgba(87,220,197,.08)';ctx.lineWidth=1;for(let r=90;r<Math.max(canvas.width,canvas.height);r+=90){ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);ctx.stroke();}for(let a=0;a<Math.PI*2;a+=Math.PI/12){ctx.beginPath();ctx.moveTo(cx+Math.cos(a)*7,cy+Math.sin(a)*7);ctx.lineTo(cx+Math.cos(a)*13,cy+Math.sin(a)*13);ctx.stroke();}const sweep=performance.now()*.00075%(Math.PI*2),grad=ctx.createRadialGradient(cx,cy,5,cx,cy,Math.max(canvas.width,canvas.height)*.8);grad.addColorStop(0,'rgba(49,220,183,.13)');grad.addColorStop(1,'rgba(49,220,183,0)');ctx.fillStyle=grad;ctx.beginPath();ctx.moveTo(cx,cy);ctx.arc(cx,cy,Math.max(canvas.width,canvas.height),sweep-.16,sweep);ctx.closePath();ctx.fill();ctx.strokeStyle='rgba(105,255,222,.28)';ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(cx+Math.cos(sweep)*Math.max(canvas.width,canvas.height),cy+Math.sin(sweep)*Math.max(canvas.width,canvas.height));ctx.stroke();ctx.restore();
+  for(const p of exitPulses){ctx.strokeStyle=`rgba(105,255,220,${Math.max(0,p.alpha*(1-p.r/p.max))})`;ctx.lineWidth=2;ctx.beginPath();ctx.arc(sx(p.x),sy(p.y),p.r,0,Math.PI*2);ctx.stroke();}
+  const ex=toWorld(door.x,door.y),exs=sx(ex.x),eys=sy(ex.y),g=ctx.createRadialGradient(exs,eys,2,exs,eys,70);g.addColorStop(0,'rgba(120,255,220,.72)');g.addColorStop(.45,'rgba(60,220,190,.22)');g.addColorStop(1,'rgba(60,220,190,0)');ctx.fillStyle=g;ctx.beginPath();ctx.arc(exs,eys,70,0,Math.PI*2);ctx.fill();ctx.strokeStyle='rgba(140,255,220,.8)';ctx.beginPath();ctx.arc(exs,eys,10,0,Math.PI*2);ctx.stroke();
+  for(const gd of glowDots){ctx.fillStyle=`rgba(${gd.color},${gd.a})`;ctx.beginPath();ctx.arc(sx(gd.x),sy(gd.y),gd.size,0,Math.PI*2);ctx.fill();}for(const w of sonarWaves)drawSonarSector(w,camX,camY);for(const n of noiseRipples){ctx.strokeStyle=`rgba(255,205,120,${Math.max(0,1-n.r/n.max)*.7})`;ctx.beginPath();ctx.arc(sx(n.x),sy(n.y),n.r,0,Math.PI*2);ctx.stroke();}for(const p of monsterPulses){ctx.strokeStyle=`rgba(255,100,90,${Math.max(0,p.alpha*(1-p.r/p.max))})`;ctx.beginPath();ctx.arc(sx(p.x),sy(p.y),p.r,0,Math.PI*2);ctx.stroke();}
+  if(monster.awake){ctx.fillStyle='rgba(255,90,80,.22)';ctx.beginPath();ctx.arc(sx(monster.x),sy(monster.y),6,0,Math.PI*2);ctx.fill();}if(monster.revealTimer>0){ctx.strokeStyle=`rgba(255,100,90,${.5+Math.random()*.4})`;ctx.beginPath();ctx.arc(sx(monster.x),sy(monster.y),14+Math.sin(performance.now()*.015)*4,0,Math.PI*2);ctx.stroke();}
+  const aim=Math.atan2(mouse.y-cy,mouse.x-cx);ctx.strokeStyle='rgba(145,255,223,.5)';ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(cx+Math.cos(aim)*96,cy+Math.sin(aim)*96);ctx.stroke();ctx.fillStyle='#d9fff3';ctx.shadowColor='#69ffe0';ctx.shadowBlur=12;ctx.beginPath();ctx.arc(cx,cy,player.r,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;
+  ctx.save();ctx.globalAlpha=.045;ctx.strokeStyle='#9fffee';for(let y=0;y<canvas.height;y+=4){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(canvas.width,y);ctx.stroke();}ctx.restore();drawMiniReplay();}
+function loop(now){const dt=Math.min(.033,(now-lastTime)/1000);lastTime=now;update(dt);draw();requestAnimationFrame(loop);}initGame();requestAnimationFrame(loop);
 </script>
 </body>
 </html>
