@@ -126,33 +126,81 @@ function toWorld(mx,my){ return { x:(mx+0.5)*tile, y:(my+0.5)*tile }; }
 function worldToMap(x,y){ return { mx:Math.floor(x/tile), my:Math.floor(y/tile) }; }
 
 function generateMaze(){
-  mapW = cols*2+1; mapH = rows*2+1;
-  map = Array.from({length: mapH}, ()=>Array(mapW).fill(1));
-  const visited = Array.from({length: rows}, ()=>Array(cols).fill(false));
-
-  const sx = Math.floor(cols/2), sy = Math.floor(rows/2);
-  const stack = [{x:sx,y:sy}];
-  visited[sy][sx] = true;
-  map[sy*2+1][sx*2+1] = 0;
-
-  const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
-  while(stack.length){
-    const c = stack[stack.length-1];
-    const shuffled = dirs.slice().sort(()=>Math.random()-0.5);
-    let moved = false;
-    for(const [dx,dy] of shuffled){
-      const nx = c.x+dx, ny = c.y+dy;
-      if(nx<0||ny<0||nx>=cols||ny>=rows) continue;
-      if(visited[ny][nx]) continue;
-      visited[ny][nx] = true;
-      map[ny*2+1][nx*2+1] = 0;
-      map[c.y*2+1+dy][c.x*2+1+dx] = 0;
-      stack.push({x:nx,y:ny});
-      moved = true;
-      break;
+      for(let x=1; x<mapW-1; x+=2){
+        if(map[y][x]!==0) continue;
+        let open = 0;
+        for(const [dx,dy] of dirs) if(map[y+dy][x+dx]===0) open++;
+        if(open<=1) deadEnds.push({x,y});
+      }
     }
-    if(!moved) stack.pop();
+    for(const d of deadEnds){
+      const shuffled = [[1,0],[-1,0],[0,1],[0,-1]].sort(()=>Math.random()-0.5);
+      for(const [dx,dy] of shuffled){
+        const wx = d.x + dx, wy = d.y + dy;
+        const nx = d.x + dx*2, ny = d.y + dy*2;
+        if(nx<=0||ny<=0||nx>=mapW-1||ny>=mapH-1) continue;
+        if(map[wy][wx]===1 && map[ny][nx]===0){ map[wy][wx]=0; break; }
+      }
+    }
   }
+
+  // open pockets
+  for(let i=0;i<5;i++){
+    const cx = randInt(3,mapW-4), cy = randInt(3,mapH-4);
+    for(let y=-1;y<=1;y++){
+      for(let x=-1;x<=1;x++){
+        const xx=cx+x, yy=cy+y;
+        if(xx<=0||yy<=0||xx>=mapW-1||yy>=mapH-1) continue;
+        map[yy][xx] = 0;
+      }
+    }
+  }
+
+  // DOOR (required)
+  const side = randInt(0,3);
+  const candidates = [];
+  if(side===0){ for(let x=1;x<mapW-1;x+=2) if(map[1][x]===0) candidates.push({x,y:0}); }
+  if(side===1){ for(let x=1;x<mapW-1;x+=2) if(map[mapH-2][x]===0) candidates.push({x,y:mapH-1}); }
+  if(side===2){ for(let y=1;y<mapH-1;y+=2) if(map[y][1]===0) candidates.push({x:0,y}); }
+  if(side===3){ for(let y=1;y<mapH-1;y+=2) if(map[y][mapW-2]===0) candidates.push({x:mapW-1,y}); }
+
+  // fallback if side had no candidates
+  if(!candidates.length){
+    for(let x=1;x<mapW-1;x+=2){
+      if(map[1][x]===0) { candidates.push({x,y:0}); break; }
+      if(map[mapH-2][x]===0) { candidates.push({x,y:mapH-1}); break; }
+    }
+  }
+
+  door = candidates[Math.floor(Math.random()*candidates.length)];
+  map[door.y][door.x] = 2;
+
+  // random player spawn in-map
+  function randomOpenCell(minDoorDist=10){
+    for(let i=0;i<5000;i++){
+      const mx = randInt(1,mapW-2), my = randInt(1,mapH-2);
+      if(map[my][mx]!==0) continue;
+      const dd = Math.abs(mx-door.x)+Math.abs(my-door.y);
+      if(dd < minDoorDist) continue;
+      return {mx,my};
+    }
+    return {mx:1,my:1};
+  }
+
+  const ps = randomOpenCell(10);
+
+  // monster far from player
+  let ms = null;
+  for(let i=0;i<5000;i++){
+    const mx=randInt(1,mapW-2), my=randInt(1,mapH-2);
+    if(map[my][mx]!==0) continue;
+    if(Math.abs(mx-ps.mx)+Math.abs(my-ps.my) < 18) continue;
+    ms = {mx,my}; break;
+  }
+  if(!ms) ms={mx:mapW-2,my:mapH-2};
+
+  return {playerStart:ps, monsterStart:ms};
+}
 
   // forgiving loops
 const extraBreaks = Math.floor(cols * rows * 0.62);
