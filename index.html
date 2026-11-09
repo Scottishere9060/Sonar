@@ -97,7 +97,7 @@ function angleDiff(a,b){
 }
 
 // ===== Maze (wider + forgiving) =====
-const tile = 60;            // wider roads (increased)
+const tile = 52;            // wider roads (increased)
 const cols = 13, rows = 13;
 let map = [];
 let mapW = cols*2+1, mapH = rows*2+1;
@@ -126,26 +126,48 @@ function toWorld(mx,my){ return { x:(mx+0.5)*tile, y:(my+0.5)*tile }; }
 function worldToMap(x,y){ return { mx:Math.floor(x/tile), my:Math.floor(y/tile) }; }
 
 function generateMaze(){
-      for(let x=1; x<mapW-1; x+=2){
-        if(map[y][x]!==0) continue;
-        let open = 0;
-        for(const [dx,dy] of dirs) if(map[y+dy][x+dx]===0) open++;
-        if(open<=1) deadEnds.push({x,y});
-      }
+  mapW = cols*2+1; mapH = rows*2+1;
+  map = Array.from({length: mapH}, ()=>Array(mapW).fill(1));
+  const visited = Array.from({length: rows}, ()=>Array(cols).fill(false));
+
+  const sx = Math.floor(cols/2), sy = Math.floor(rows/2);
+  const stack = [{x:sx,y:sy}];
+  visited[sy][sx] = true;
+  map[sy*2+1][sx*2+1] = 0;
+
+  const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
+  while(stack.length){
+    const c = stack[stack.length-1];
+    const shuffled = dirs.slice().sort(()=>Math.random()-0.5);
+    let moved = false;
+    for(const [dx,dy] of shuffled){
+      const nx = c.x+dx, ny = c.y+dy;
+      if(nx<0||ny<0||nx>=cols||ny>=rows) continue;
+      if(visited[ny][nx]) continue;
+      visited[ny][nx] = true;
+      map[ny*2+1][nx*2+1] = 0;
+      map[c.y*2+1+dy][c.x*2+1+dx] = 0;
+      stack.push({x:nx,y:ny});
+      moved = true;
+      break;
     }
-    for(const d of deadEnds){
-      const shuffled = [[1,0],[-1,0],[0,1],[0,-1]].sort(()=>Math.random()-0.5);
-      for(const [dx,dy] of shuffled){
-        const wx = d.x + dx, wy = d.y + dy;
-        const nx = d.x + dx*2, ny = d.y + dy*2;
-        if(nx<=0||ny<=0||nx>=mapW-1||ny>=mapH-1) continue;
-        if(map[wy][wx]===1 && map[ny][nx]===0){ map[wy][wx]=0; break; }
-      }
+    if(!moved) stack.pop();
+  }
+
+  // forgiving loops
+  const extraBreaks = Math.floor(cols * rows * 0.42);
+  for(let i=0;i<extraBreaks;i++){
+    if(Math.random() < 0.5){
+      const x = randInt(2,mapW-3), y = randInt(1,mapH-2);
+      if(x%2===0 && y%2===1 && map[y][x]===1 && map[y][x-1]===0 && map[y][x+1]===0) map[y][x]=0;
+    } else {
+      const x = randInt(1,mapW-2), y = randInt(2,mapH-3);
+      if(x%2===1 && y%2===0 && map[y][x]===1 && map[y-1][x]===0 && map[y+1][x]===0) map[y][x]=0;
     }
   }
 
   // open pockets
-  for(let i=0;i<5;i++){
+  for(let i=0;i<3;i++){
     const cx = randInt(3,mapW-4), cy = randInt(3,mapH-4);
     for(let y=-1;y<=1;y++){
       for(let x=-1;x<=1;x++){
@@ -156,7 +178,7 @@ function generateMaze(){
     }
   }
 
-  // DOOR (required)
+  // door on perimeter
   const side = randInt(0,3);
   const candidates = [];
   if(side===0){ for(let x=1;x<mapW-1;x+=2) if(map[1][x]===0) candidates.push({x,y:0}); }
@@ -164,117 +186,19 @@ function generateMaze(){
   if(side===2){ for(let y=1;y<mapH-1;y+=2) if(map[y][1]===0) candidates.push({x:0,y}); }
   if(side===3){ for(let y=1;y<mapH-1;y+=2) if(map[y][mapW-2]===0) candidates.push({x:mapW-1,y}); }
 
-  // fallback if side had no candidates
-  if(!candidates.length){
-    for(let x=1;x<mapW-1;x+=2){
-      if(map[1][x]===0) { candidates.push({x,y:0}); break; }
-      if(map[mapH-2][x]===0) { candidates.push({x,y:mapH-1}); break; }
-    }
-  }
-
   door = candidates[Math.floor(Math.random()*candidates.length)];
   map[door.y][door.x] = 2;
 
-  // random player spawn in-map
-  function randomOpenCell(minDoorDist=10){
-    for(let i=0;i<5000;i++){
-      const mx = randInt(1,mapW-2), my = randInt(1,mapH-2);
-      if(map[my][mx]!==0) continue;
-      const dd = Math.abs(mx-door.x)+Math.abs(my-door.y);
-      if(dd < minDoorDist) continue;
-      return {mx,my};
-    }
-    return {mx:1,my:1};
-  }
-
-  const ps = randomOpenCell(10);
-
-  // monster far from player
+  const ps = { mx:sx*2+1, my:sy*2+1 };
   let ms = null;
   for(let i=0;i<5000;i++){
     const mx=randInt(1,mapW-2), my=randInt(1,mapH-2);
     if(map[my][mx]!==0) continue;
-    if(Math.abs(mx-ps.mx)+Math.abs(my-ps.my) < 18) continue;
+    if(Math.abs(mx-ps.mx)+Math.abs(my-ps.my) < 16) continue;
     ms = {mx,my}; break;
   }
-  if(!ms) ms={mx:mapW-2,my:mapH-2};
-
+  if(!ms) ms={mx:1,my:1};
   return {playerStart:ps, monsterStart:ms};
-}
-
-  // forgiving loops
-const extraBreaks = Math.floor(cols * rows * 0.62);
-for(let i=0;i<extraBreaks;i++){
-  if(Math.random() < 0.5){
-    const x = randInt(2,mapW-3), y = randInt(1,mapH-2);
-    if(x%2===0 && y%2===1 && map[y][x]===1 && map[y][x-1]===0 && map[y][x+1]===0) map[y][x]=0;
-  } else {
-    const x = randInt(1,mapW-2), y = randInt(2,mapH-3);
-    if(x%2===1 && y%2===0 && map[y][x]===1 && map[y-1][x]===0 && map[y+1][x]===0) map[y][x]=0;
-  }
-}
-
-// remove dead ends iteratively
-for (let pass=0; pass<3; pass++){
-  const deadEnds = [];
-  for(let y=1; y<mapH-1; y+=2){
-    for(let x=1; x<mapW-1; x+=2){
-      if(map[y][x]!==0) continue;
-      let open = 0;
-      const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
-      for(const [dx,dy] of dirs) if(map[y+dy][x+dx]===0) open++;
-      if(open<=1) deadEnds.push({x,y});
-    }
-  }
-
-  for(const d of deadEnds){
-    const dirs = [[1,0],[-1,0],[0,1],[0,-1]].sort(()=>Math.random()-0.5);
-    for(const [dx,dy] of dirs){
-      const wx = d.x + dx, wy = d.y + dy;       // wall cell
-      const nx = d.x + dx*2, ny = d.y + dy*2;   // next room cell
-      if(nx<=0||ny<=0||nx>=mapW-1||ny>=mapH-1) continue;
-      if(map[wy][wx]===1 && map[ny][nx]===0){ map[wy][wx]=0; break; }
-    }
-  }
-}
-
-// larger open pockets
-for(let i=0;i<5;i++){
-  const cx = randInt(3,mapW-4), cy = randInt(3,mapH-4);
-  for(let y=-1;y<=1;y++){
-    for(let x=-1;x<=1;x++){
-      const xx=cx+x, yy=cy+y;
-      if(xx<=0||yy<=0||xx>=mapW-1||yy>=mapH-1) continue;
-      map[yy][xx] = 0;
-    }
-  }
-}
-
-// random player spawn in-map (not fixed center)
-function randomOpenCell(minDoorDist=8){
-  for(let i=0;i<5000;i++){
-    const mx = randInt(1,mapW-2), my = randInt(1,mapH-2);
-    if(map[my][mx]!==0) continue;
-    const dd = Math.abs(mx-door.x)+Math.abs(my-door.y);
-    if(dd < minDoorDist) continue;
-    return {mx,my};
-  }
-  return {mx:1,my:1};
-}
-
-const ps = randomOpenCell(10);
-
-// monster far from player
-let ms = null;
-for(let i=0;i<5000;i++){
-  const mx=randInt(1,mapW-2), my=randInt(1,mapH-2);
-  if(map[my][mx]!==0) continue;
-  if(Math.abs(mx-ps.mx)+Math.abs(my-ps.my) < 18) continue;
-  ms = {mx,my}; break;
-}
-if(!ms) ms={mx:mapW-2,my:mapH-2};
-
-return {playerStart:ps, monsterStart:ms};
 }
 
 function isSolid(mx,my){
@@ -338,19 +262,19 @@ function wakeMonster(){
 function fireSonar(type){
   if(gameState!=="playing") return;
   const isQ = type==="Q";
-  const cost = isQ ? 7 : 10; // blue cheaper
+  const cost = isQ ? 12 : 10;
   if(player.pfc < cost) return;
   player.pfc -= cost;
 
   const aim = Math.atan2(mouse.y-canvas.height/2, mouse.x-canvas.width/2);
   sonarWaves.push({
     type, x:player.x, y:player.y, angle:aim,
-    spread: isQ ? Math.PI/6.5 : Math.PI*0.8,
+    spread: isQ ? Math.PI/8 : Math.PI*0.8,
     r:2,
-    speed: isQ ? 15 : 3.0,
-    maxR: isQ ? 620 : 940,
-    thickness: isQ ? 18 : 50,
-    color: isQ ? [120,255,220] : [255,70,70] // cyan sonar
+    speed: isQ ? 12 : 3.0,
+    maxR: isQ ? 430 : 940,
+    thickness: isQ ? 14 : 50,
+    color: isQ ? [70,175,255] : [255,70,70]
   });
 }
 
@@ -368,13 +292,13 @@ function updateSonar(dt){
       monster.revealTimer = Math.max(monster.revealTimer, 90);
     }
 
-    const samples = w.type==="Q" ? 70 : 24;
+    const samples = w.type==="Q" ? 44 : 24;
     for(let s=0;s<=samples;s++){
       const t=-w.spread/2 + (s/samples)*w.spread;
       const px=w.x+Math.cos(w.angle+t)*w.r;
       const py=w.y+Math.sin(w.angle+t)*w.r;
       if(collidesWall(px,py,1.6)){
-        if(Math.random() < (w.type==="Q" ? 0.97 : 0.28)){
+        if(Math.random() < (w.type==="Q" ? 0.84 : 0.28)){
           glowDots.push({
             x:px,y:py,a:1,size:w.type==="Q"?2.8:1.8,
             color:w.type==="Q"?"100,200,255":"255,90,90"
@@ -434,7 +358,7 @@ function initGame(){
   player={x:p.x,y:p.y,r:7,speed:2.45,sprintSpeed:4.05,core:100,pfc:100};
 
   // Slower monster
-  monster={x:m.x,y:m.y,r:18,awake:false,speed:1.62,path:[],pathIdx:0,recalc:0,revealTimer:0};
+  monster={x:m.x,y:m.y,r:11,awake:false,speed:2.08,path:[],pathIdx:0,recalc:0,revealTimer:0};
 
   sonarWaves=[]; glowDots=[]; noiseRipples=[]; exitPulses=[]; monsterPulses=[];
   exitPulseTimer=1.8;
@@ -743,12 +667,12 @@ function draw(){
   if(monster.awake){
     ctx.fillStyle = "rgba(255,70,70,0.18)";
     ctx.beginPath();
-    ctx.arc(sx(monster.x), sy(monster.y), 9, 0, Math.PI*2);
+    ctx.arc(sx(monster.x), sy(monster.y), 5.5, 0, Math.PI*2);
     ctx.fill();
   }
   if(monster.revealTimer>0){
     const flick=0.45+Math.random()*0.55;
-    const rr=22+Math.sin(performance.now()*0.015)*5;
+    const rr=14+Math.sin(performance.now()*0.015)*4;
     ctx.strokeStyle=`rgba(255,60,60,${flick})`;
     ctx.beginPath();
     ctx.arc(sx(monster.x),sy(monster.y),rr,0,Math.PI*2);
@@ -782,7 +706,7 @@ function draw(){
   ctx.stroke();
   ctx.restore();
 
-  ctx.fillStyle="rgba(180,255,180,0.95)";
+  ctx.fillStyle="#fff";
   ctx.beginPath();
   ctx.arc(cx,cy,player.r,0,Math.PI*2);
   ctx.fill();
