@@ -13,39 +13,172 @@
 </head>
 <body>
 <canvas id="game"></canvas>
-<div id="hud"><div class="card"><div class="brand">ABYSSAL SURVEY // 09</div><div class="title">SONAR</div><div class="stat">SUIT INTEGRITY</div><div class="bar"><div id="health" class="fill"></div></div><div class="stat">SONAR CHARGE</div><div class="bar"><div id="charge" class="fill"></div></div></div><div class="card right"><div id="levelTag" class="tag">DEPTH 01</div><div id="objective" class="objective"></div><div id="threat" class="stat">THREAT // DORMANT</div></div></div>
-<div class="controls"><span class="key">WASD</span> MOVE &nbsp; <span class="key">SHIFT</span> SPRINT &nbsp; <span class="key">SPACE</span> SONAR PING &nbsp; <span class="key">F</span> DECOY &nbsp; <span class="key">E</span> EXCAVATE / TAKE</div><div id="toast" class="toast"></div><div id="overlay" class="show"><div class="modal"><div class="brand">ABYSSAL SURVEY // 09</div><h1>THE DROWNED SIGNAL</h1><p>Two dives. One way out. Your sonar reveals the maze—but every pulse tells the hunter where you are.</p><button id="start">BEGIN DIVE</button></div></div>
+<div id="hud">
+  <div class="card">
+    <div class="brand">ABYSSAL SURVEY // 09</div>
+    <div class="title">SONAR</div>
+    <div class="stat">SUIT INTEGRITY</div>
+    <div class="bar"><div id="health" class="fill"></div></div>
+    <div class="stat">SONAR CHARGE</div>
+    <div class="bar"><div id="charge" class="fill"></div></div>
+  </div>
+  <div class="card right">
+    <div id="levelTag" class="tag">LEVEL 01</div>
+    <div id="objective" class="objective"></div>
+    <div id="threat" class="stat">THREAT // DORMANT</div>
+  </div>
+</div>
+<div class="controls"><span class="key">WASD</span> MOVE &nbsp; <span class="key">SHIFT</span> SPRINT &nbsp; <span class="key">SPACE</span> SONAR PING &nbsp; <span class="key">F</span> DECOY &nbsp; <span class="key">E</span> INTERACT</div>
+<div id="toast" class="toast"></div>
+<div id="overlay" class="show">
+  <div class="modal">
+    <div class="brand">ABYSSAL SURVEY // 09</div>
+    <h1>THE DROWNED SIGNAL</h1>
+    <p>Two dives. One way out. Your sonar reveals the maze—but every pulse tells the hunter where you are.</p>
+    <button id="start">BEGIN DIVE</button>
+  </div>
+</div>
 <script>
 const canvas=document.querySelector('#game'),ctx=canvas.getContext('2d'),healthUI=document.querySelector('#health'),chargeUI=document.querySelector('#charge'),objectiveUI=document.querySelector('#objective'),levelUI=document.querySelector('#levelTag'),threatUI=document.querySelector('#threat'),toastUI=document.querySelector('#toast'),overlay=document.querySelector('#overlay');
-let W=0,H=0;function resize(){W=canvas.width=innerWidth*devicePixelRatio;H=canvas.height=innerHeight*devicePixelRatio;ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);W=innerWidth;H=innerHeight}addEventListener('resize',resize);resize();
-const N=17,T=56,S=N*2+1;let grid,player,hunter,exit,sites=[],artifact,level=1,charge=100,integrity=100,state='intro',waves=[],noise=[],decoys=[],reveals=[],last=0,toastTimer=0,keys={},mouse={x:0,y:0};
+let W=0,H=0;function resize(){W=innerWidth;H=innerHeight;canvas.width=W*devicePixelRatio;canvas.height=H*devicePixelRatio;ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0)}addEventListener('resize',resize);resize();
+const N=17,T=56,S=N*2+1;let grid,player,hunter,exit,sites=[],artifact,level=1,charge=100,integrity=100,state='intro',waves=[],noise=[],decoys=[],reveals=[],last=0,toastTimer=0,keys={},mouse={x:W/2,y:H/2};
 const rand=(a,b)=>Math.floor(Math.random()*(b-a+1)),clamp=(v,a,b)=>Math.max(a,Math.min(b,v)),hyp=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
 function world(x,y){return{x:(x+.5)*T,y:(y+.5)*T}}function cell(x,y){return{x:Math.floor(x/T),y:Math.floor(y/T)}}function walk(x,y){return x>=0&&y>=0&&x<S&&y<S&&grid[y][x]!==1}
-function maze(){grid=Array.from({length:S},()=>Array(S).fill(1));let stack=[{x:1,y:1}];grid[1][1]=0;while(stack.length){let c=stack.at(-1),opts=[[2,0],[-2,0],[0,2],[0,-2]].filter(([dx,dy])=>c.x+dx>0&&c.y+dy>0&&c.x+dx<S-1&&c.y+dy<S-1&&grid[c.y+dy][c.x+dx]===1);if(!opts.length){stack.pop();continue}let [dx,dy]=opts[rand(0,opts.length-1)];grid[c.y+dy/2][c.x+dx/2]=0;grid[c.y+dy][c.x+dx]=0;stack.push({x:c.x+dx,y:c.y+dy})}for(let i=0;i<42;i++){let x=rand(1,S-2),y=rand(1,S-2);if(grid[y][x]===1&&((x%2)!==(y%2)))grid[y][x]=0}}
-function distances(start){let d=Array.from({length:S},()=>Array(S).fill(-1)),q=[start];d[start.y][start.x]=0;for(let i=0;i<q.length;i++){let c=q[i];for(let [dx,dy]of [[1,0],[-1,0],[0,1],[0,-1]]){let x=c.x+dx,y=c.y+dy;if(walk(x,y)&&d[y][x]<0){d[y][x]=d[c.y][c.x]+1;q.push({x,y})}}}return d}
-function farCell(d,min=8,exclude=[]){let a=[];for(let y=1;y<S-1;y++)for(let x=1;x<S-1;x++)if(walk(x,y)&&d[y][x]>=min&&!exclude.some(c=>c.x===x&&c.y===y))a.push({x,y});return a[rand(0,a.length-1)]}
-function initLevel(n){level=n;maze();let start={x:1,y:1},d=distances(start);player={...world(start.x,start.y),r:10,vx:0,vy:0};exit=farCell(d,22);sites=[];artifact=null;waves=[];noise=[];decoys=[];reveals=[];charge=100;integrity=100;if(n===1){for(let i=0;i<4;i++){let c=farCell(d,10,[exit,...sites]);sites.push({...c,dug:false})}}else{artifact=farCell(d,20,[exit]);let h=farCell(d,30,[exit,artifact]);hunter={...world(h.x,h.y),r:17,speed:83,target:null,awake:false,stun:0,repath:0,path:[]}}updateUI();say(n===1?'DIVE 01 // EXCAVATE THE FOUR SIGNAL DEPOSITS':'DIVE 02 // RETRIEVE THE CORE. THEN RUN.');state='playing'}
-function updateUI(){levelUI.textContent=`DEPTH 0${level}`;objectiveUI.innerHTML=level===1?`EXCAVATION<br><strong>${sites.filter(s=>s.dug).length} / ${sites.length}</strong> deposits recovered<br>Then reach the marked hatch.`:`RECOVERY<br>${artifact?'Retrieve the <strong>black-box core</strong>, then reach the hatch.':'Core secured. <strong>Reach the hatch.</strong>'}`;healthUI.style.width=integrity+'%';chargeUI.style.width=charge+'%';threatUI.textContent=level===1?'THREAT // NONE DETECTED':hunter?.awake?'THREAT // HUNTING':'THREAT // DORMANT'}
+function maze(){
+  grid=Array.from({length:S},()=>Array(S).fill(1));
+  let stack=[{x:1,y:1}];grid[1][1]=0;
+  while(stack.length){
+    let c=stack.at(-1),opts=[[2,0],[-2,0],[0,2],[0,-2]].filter(([dx,dy])=>c.x+dx>0&&c.y+dy>0&&c.x+dx<S-1&&c.y+dy<S-1&&grid[c.y+dy][c.x+dx]===1);
+    if(!opts.length){stack.pop();continue}
+    let [dx,dy]=opts[rand(0,opts.length-1)];
+    grid[c.y+dy/2][c.x+dx/2]=0;grid[c.y+dy][c.x+dx]=0;stack.push({x:c.x+dx,y:c.y+dy});
+  }
+  for(let i=0;i<40;i++){let x=rand(1,S-2),y=rand(1,S-2);if(grid[y][x]===1&&((x%2)!==(y%2)))grid[y][x]=0}
+}
+function distances(start){
+  let d=Array.from({length:S},()=>Array(S).fill(-1)),q=[start];d[start.y][start.x]=0;
+  for(let i=0;i<q.length;i++){let c=q[i];for(let [dx,dy]of [[1,0],[-1,0],[0,1],[0,-1]]){let x=c.x+dx,y=c.y+dy;if(walk(x,y)&&d[y][x]<0){d[y][x]=d[c.y][c.x]+1;q.push({x,y})}}}
+  return d;
+}
+function farCell(d,min=8,exclude=[]){let a=[];for(let y=1;y<S-1;y++)for(let x=1;x<S-1;x++)if(walk(x,y)&&d[y][x]>=min&&!exclude.some(c=>c.x===x&&c.y===y))a.push({x,y});return a.length?a[rand(0,a.length-1)]:{x:1,y:1}}
+function initLevel(n){
+  level=n;maze();let start={x:1,y:1},d=distances(start);player={...world(start.x,start.y),r:10,vx:0,vy:0};exit=farCell(d,22);sites=[];artifact=null;waves=[];noise=[];decoys=[];reveals=[];charge=100;integrity=100;
+  if(level===1){
+    for(let i=0;i<4;i++){let c=farCell(d,10,[exit,...sites]);sites.push({x:c.x,y:c.y,dug:false});}
+    hunter=null;
+  } else {
+    artifact=farCell(d,20,[exit]);
+    hunter={x:exit.x*T+T/2,y:exit.y*T+T/2,r:16,speed:88,target:{x:player.x,y:player.y},awake:false,stun:0,path:[],repath:0};
+  }
+  updateUI();say(level===1?'LEVEL 1 // EXCAVATE THE SIGNAL CACHE':'LEVEL 2 // RETRIEVE THE CORE THEN RUN');
+  state='playing';
+}
+function updateUI(){
+  levelUI.textContent=`LEVEL ${String(level).padStart(2,'0')}`;
+  objectiveUI.innerHTML = level===1
+    ? `EXCAVATION<br><strong>${sites.filter(s=>s.dug).length} / ${sites.length}</strong> deposits recovered<br>Then reach the marked hatch.`
+    : artifact
+      ? `RECOVERY<br>Take the <strong>black-box core</strong>.<br>Then reach the hatch before the hunter closes in.`
+      : `ESCAPE<br><strong>Core secured.</strong><br>Get to the exit.`;
+  healthUI.style.width=integrity+'%';
+  chargeUI.style.width=charge+'%';
+  threatUI.textContent = level===1 ? 'THREAT // DORMANT' : (hunter&&hunter.awake ? 'THREAT // HUNTER ACTIVE' : 'THREAT // DORMANT');
+  if(level===1){healthUI.parentElement.classList.remove('red');chargeUI.parentElement.classList.remove('red')} 
+}
 function say(text){toastUI.textContent=text;toastUI.classList.add('show');toastTimer=2.2}
-function ping(decoy=false){if(state!=='playing'||charge<(decoy?28:12))return;charge-=decoy?28:12;let p=decoy?{x:player.x+Math.cos(Math.atan2(mouse.y-H/2,mouse.x-W/2))*135,y:player.y+Math.sin(Math.atan2(mouse.y-H/2,mouse.x-W/2))*135}:player;waves.push({x:p.x,y:p.y,r:4,max:decoy?470:650,speed:decoy?300:390,red:false});reveals.push({x:p.x,y:p.y,r:decoy?470:650,t:3.2});noise.push({x:p.x,y:p.y,r:0,max:decoy?620:850,speed:260,heard:false});if(decoy){decoys.push({x:p.x,y:p.y,t:3});if(hunter?.awake){hunter.target={...p};hunter.repath=0}say('DECOY PING // HUNTER DIVERTED')}else if(hunter?.awake)say('SONAR EMISSION // POSITION EXPOSED')}
-addEventListener('keydown',e=>{let k=e.key.toLowerCase();keys[k]=true;if([' ','arrowup','arrowdown','arrowleft','arrowright'].includes(k))e.preventDefault();if(!e.repeat&&k===' '){mouse.x=innerWidth/2;mouse.y=innerHeight/2;ping()}if(!e.repeat&&k==='f')ping(true);if(!e.repeat&&k==='e')interact();if(!e.repeat&&k==='r'&&state!=='intro'){if(level>1)initLevel(2);else initLevel(1)}});addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);addEventListener('mousemove',e=>{mouse.x=e.clientX;mouse.y=e.clientY});document.querySelector('#start').onclick=()=>initLevel(1);
-function interact(){if(state!=='playing')return;if(level===1){let s=sites.find(s=>!s.dug&&hyp(player,world(s.x,s.y))<T*.95);if(s){s.dug=true;updateUI();say(`DEPOSIT EXCAVATED // ${sites.filter(x=>x.dug).length} OF 4`);return}if(sites.every(x=>x.dug)&&hyp(player,world(exit.x,exit.y))<T){finishLevel();return}say('MOVE CLOSER TO A DEPOSIT OR HATCH')}else{if(artifact&&hyp(player,world(artifact.x,artifact.y))<T){artifact=null;hunter.awake=true;hunter.target={...player};say('CORE SECURED // HUNTER ACTIVE — RUN!');updateUI();return}if(!artifact&&hyp(player,world(exit.x,exit.y))<T){finishLevel();return}say(artifact?'MOVE CLOSER TO THE CORE':'THE HATCH IS NEARBY')}}
-function finishLevel(){if(level===1){state='between';overlay.classList.add('show');overlay.querySelector('.brand').textContent='DIVE 01 COMPLETE';overlay.querySelector('h1').textContent='SIGNALS RECOVERED';overlay.querySelector('p').textContent='The excavation is complete. A live hunter is guarding the black-box core on the next dive.';overlay.querySelector('button').textContent='DESCEND TO DIVE 02';overlay.querySelector('button').onclick=()=>{overlay.classList.remove('show');initLevel(2)}}else{state='won';overlay.classList.add('show');overlay.querySelector('.brand').textContent='MISSION COMPLETE';overlay.querySelector('h1').textContent='YOU MADE IT OUT';overlay.querySelector('p').textContent='The core is recovered. The abyss keeps its secrets—for now.';overlay.querySelector('button').textContent='DIVE AGAIN';overlay.querySelector('button').onclick=()=>{overlay.classList.remove('show');initLevel(1)}}}
+function ping(decoy=false){
+  if(state!=='playing'||charge<(decoy?28:12))return;
+  charge-=decoy?28:12;
+  let dir=Math.atan2(mouse.y-H/2,mouse.x-W/2),p=decoy?{x:player.x+Math.cos(dir)*135,y:player.y+Math.sin(dir)*135}:{x:player.x,y:player.y};
+  const red = !decoy && hunter && hunter.awake;
+  waves.push({x:p.x,y:p.y,r:4,max:decoy?470:650,speed:decoy?300:390,red});
+  reveals.push({x:p.x,y:p.y,r:decoy?470:650,t:3.2,red});
+  noise.push({x:p.x,y:p.y,r:0,max:decoy?620:850,speed:260,heard:false});
+  if(decoy){decoys.push({x:p.x,y:p.y,t:3});if(hunter&&hunter.awake){hunter.target={x:p.x,y:p.y};hunter.repath=0}say('DECOY PING // HUNTER DIVERTED')}
+  else if(red){say('RED SONAR // HOSTILE CONTACT')}
+  else say('ACTIVE SONAR // SWEEPING');
+}
+addEventListener('keydown',e=>{
+  let k=e.key.toLowerCase();keys[k]=true;
+  if([' ','arrowup','arrowdown','arrowleft','arrowright'].includes(k))e.preventDefault();
+  if(!e.repeat&&k===' '){mouse.x=W/2;mouse.y=H/2;ping()} 
+  if(!e.repeat&&k==='f')ping(true);
+  if(!e.repeat&&k==='e')interact();
+  if(!e.repeat&&k==='r'&&state!='intro'){initLevel(level);}
+});
+addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);addEventListener('mousemove',e=>{mouse.x=e.clientX;mouse.y=e.clientY});
+document.querySelector('#start').onclick=()=>{overlay.classList.remove('show'); initLevel(1)};
+function interact(){
+  if(state!=='playing')return;
+  if(level===1){
+    let s=sites.find(s=>!s.dug&&hyp(player,world(s.x,s.y))<T*.95);
+    if(s){s.dug=true;updateUI();say(`DEPOSIT EXCAVATED // ${sites.filter(x=>x.dug).length} OF ${sites.length}`);return;}
+    if(sites.every(x=>x.dug)&&hyp(player,world(exit.x,exit.y))<T){finishLevel();return;}
+    say('MOVE CLOSER TO A DEPOSIT OR HATCH');
+  } else {
+    if(artifact&&hyp(player,world(artifact.x,artifact.y))<T){artifact=null;hunter.awake=true;hunter.target={x:player.x,y:player.y};say('CORE SECURED // HUNTER ACTIVE — RUN!');updateUI();return;}
+    if(!artifact&&hyp(player,world(exit.x,exit.y))<T){finishLevel();return;}
+    say(artifact?'MOVE CLOSER TO THE CORE':'THE HATCH IS NEARBY');
+  }
+}
+function finishLevel(){
+  if(level===1){state='between';overlay.classList.add('show');overlay.querySelector('.brand').textContent='DIVE 01 COMPLETE';overlay.querySelector('h1').textContent='SIGNALS RECOVERED';overlay.querySelector('p').textContent='The excavation is complete. The next dive pulls the core from the deep and the hunter wakes.';overlay.querySelector('button').textContent='DESCEND TO DIVE 02';overlay.querySelector('button').onclick=()=>{overlay.classList.remove('show');initLevel(2)}}
+  else{state='won';overlay.classList.add('show');overlay.querySelector('.brand').textContent='MISSION COMPLETE';overlay.querySelector('h1').textContent='YOU MADE IT OUT';overlay.querySelector('p').textContent='The black-box core is recovered. The abyss keeps the rest.';overlay.querySelector('button').textContent='DIVE AGAIN';overlay.querySelector('button').onclick=()=>{overlay.classList.remove('show');initLevel(1)}}
+}
 function die(){state='lost';overlay.classList.add('show');overlay.querySelector('.brand').textContent='SIGNAL LOST';overlay.querySelector('h1').textContent='TAKEN BY THE DEEP';overlay.querySelector('p').textContent='The hunter found you. Use a decoy ping (F) to draw it away, then keep moving.';overlay.querySelector('button').textContent='RESTART DIVE';overlay.querySelector('button').onclick=()=>{overlay.classList.remove('show');initLevel(level)}}
-function solid(x,y,r){let l=Math.floor((x-r)/T),rr=Math.floor((x+r)/T),t=Math.floor((y-r)/T),b=Math.floor((y+r)/T);for(let cy=t;cy<=b;cy++)for(let cx=l;cx<=rr;cx++)if(!walk(cx,cy)){let nx=clamp(x,cx*T,(cx+1)*T),ny=clamp(y,cy*T,(cy+1)*T);if((x-nx)**2+(y-ny)**2<r*r)return true}return false}function move(ent,dx,dy,r){if(!solid(ent.x+dx,ent.y,r))ent.x+=dx;if(!solid(ent.x,ent.y+dy,r))ent.y+=dy}
-function pathTo(from,to){let a=cell(from.x,from.y),b=cell(to.x,to.y),d=Array.from({length:S},()=>Array(S).fill(null)),q=[a];d[a.y][a.x]=a;for(let i=0;i<q.length;i++){let c=q[i];if(c.x===b.x&&c.y===b.y)break;for(let [dx,dy]of [[1,0],[-1,0],[0,1],[0,-1]]){let x=c.x+dx,y=c.y+dy;if(walk(x,y)&&!d[y][x]){d[y][x]=c;q.push({x,y})}}}if(!d[b.y]?.[b.x])return[];let out=[],c=b;while(c.x!==a.x||c.y!==a.y){out.push(c);c=d[c.y][c.x]}return out.reverse()}
-function update(dt){if(state!=='playing')return;let dx=(keys.d?1:0)-(keys.a?1:0),dy=(keys.s?1:0)-(keys.w?1:0),moving=dx||dy;if(moving){let l=Math.hypot(dx,dy);dx/=l;dy/=l}let sprint=keys.shift&&integrity>1;let sp=sprint?190:122;move(player,dx*sp*dt,dy*sp*dt,player.r);player.vx=dx*sp;player.vy=dy*sp;integrity=clamp(integrity+(sprint?-17:moving?-3:10)*dt,0,100);charge=clamp(charge+17*dt,0,100);if(integrity<=0){integrity=0;die()}if(level===2&&hunter?.awake){if(moving&&sprint)noise.push({x:player.x,y:player.y,r:0,max:500,speed:240,heard:false});hunter.repath-=dt;if(hunter.repath<=0){hunter.path=pathTo(hunter,hunter.target||player);hunter.repath=.35}if(hunter.stun>0)hunter.stun-=dt;else if(hunter.path.length){let target=world(hunter.path[0].x,hunter.path[0].y),vx=target.x-hunter.x,vy=target.y-hunter.y,l=Math.hypot(vx,vy)||1;move(hunter,vx/l*hunter.speed*dt,vy/l*hunter.speed*dt,hunter.r);if(hyp(hunter,target)<10)hunter.path.shift()}if(hyp(player,hunter)<player.r+hunter.r+2){die()}}for(let w of waves)w.r+=w.speed*dt;waves=waves.filter(w=>w.r<w.max);for(let n of noise){n.r+=n.speed*dt;if(level===2&&hunter&&!n.heard&&hyp(n,hunter)<n.r+T*.6){n.heard=true;hunter.awake=true;hunter.target={x:n.x,y:n.y};hunter.repath=0}}noise=noise.filter(n=>n.r<n.max);reveals.forEach(r=>r.t-=dt);reveals=reveals.filter(r=>r.t>0);decoys.forEach(d=>d.t-=dt);decoys=decoys.filter(d=>d.t>0);if(toastTimer>0){toastTimer-=dt;if(toastTimer<=0)toastUI.classList.remove('show')}updateUI()}
-function drawHunter(x,y,time){ctx.save();ctx.translate(x,y);let pulse=1+Math.sin(time*5)*.05;ctx.scale(pulse,pulse);ctx.shadowBlur=28;ctx.shadowColor='#ff214b';ctx.fillStyle='#280b18';ctx.strokeStyle='#ff405c';ctx.lineWidth=2;ctx.beginPath();for(let i=0;i<16;i++){let a=i*Math.PI/8,r=i%2?18:29;ctx.lineTo(Math.cos(a)*r,Math.sin(a)*r)}ctx.closePath();ctx.fill();ctx.stroke();ctx.shadowBlur=12;ctx.fillStyle='#ff3356';ctx.beginPath();ctx.ellipse(0,0,13,9,0,0,Math.PI*2);ctx.fill();ctx.fillStyle='#fff0e9';ctx.beginPath();ctx.ellipse(4,-2,3,2,0,0,Math.PI*2);ctx.fill();ctx.fillStyle='#ff234b';ctx.beginPath();ctx.arc(4,-2,1.3,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#ff6570';ctx.lineWidth=1.4;for(let i=-1;i<=1;i++){ctx.beginPath();ctx.moveTo(-7,i*4);ctx.lineTo(-18,i*9);ctx.stroke()}ctx.restore()}
-function draw(){let camX=player?player.x-W/2:0,camY=player?player.y-H/2:0;ctx.fillStyle='#030a13';ctx.fillRect(0,0,W,H);if(!player)return;ctx.save();ctx.translate(-camX,-camY);let left=Math.max(0,Math.floor(camX/T)-1),right=Math.min(S-1,Math.ceil((camX+W)/T)+1),top=Math.max(0,Math.floor(camY/T)-1),bottom=Math.min(S-1,Math.ceil((camY+H)/T)+1);for(let y=top;y<=bottom;y++)for(let x=left;x<=right;x++){let px=x*T,py=y*T;if(grid[y][x]===1){ctx.fillStyle='#0a1a25';ctx.fillRect(px,py,T,T);ctx.strokeStyle='#142a34';ctx.strokeRect(px+1,py+1,T-2,T-2);ctx.fillStyle='#10232d';ctx.fillRect(px+5,py+5,T-10,2)}else{ctx.fillStyle='#07151e';ctx.fillRect(px,py,T,T);ctx.strokeStyle='#0c222b';ctx.strokeRect(px,py,T,T)}}
-// soft visibility and sonar-revealed points
-let grad=ctx.createRadialGradient(player.x,player.y,20,player.x,player.y,210);grad.addColorStop(0,'rgba(63,215,191,.12)');grad.addColorStop(1,'rgba(1,7,14,.82)');ctx.fillStyle=grad;ctx.fillRect(camX,camY,W,H);
-for(let r of reveals){let g=ctx.createRadialGradient(r.x,r.y,20,r.x,r.y,r.r);g.addColorStop(0,'rgba(40,200,179,.12)');g.addColorStop(1,'rgba(24,160,155,0)');ctx.fillStyle=g;ctx.fillRect(r.x-r.r,r.y-r.r,r.r*2,r.r*2)}
-// objectives
-let e=world(exit.x,exit.y);ctx.save();ctx.shadowBlur=20;ctx.shadowColor='#70ffe0';ctx.strokeStyle='#83ffe1';ctx.lineWidth=2;ctx.beginPath();ctx.arc(e.x,e.y,18+Math.sin(performance.now()/400)*3,0,Math.PI*2);ctx.stroke();ctx.fillStyle='#cffff5';ctx.fillRect(e.x-5,e.y-5,10,10);ctx.restore();for(let s of sites)if(!s.dug){let p=world(s.x,s.y);ctx.shadowBlur=14;ctx.shadowColor='#e8bd70';ctx.fillStyle='#e8bd70';ctx.beginPath();ctx.arc(p.x,p.y,7,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.strokeStyle='#e8bd7080';ctx.strokeRect(p.x-12,p.y-12,24,24)}if(artifact){let p=world(artifact.x,artifact.y);ctx.shadowBlur=25;ctx.shadowColor='#ff4964';ctx.fillStyle='#ff5a6e';ctx.save();ctx.translate(p.x,p.y);ctx.rotate(performance.now()/900);ctx.fillRect(-9,-9,18,18);ctx.restore();ctx.shadowBlur=0}
-for(let w of waves){ctx.strokeStyle=w.red?'rgba(255,45,73,.8)':'rgba(107,255,226,.65)';ctx.lineWidth=w.red?3:2;ctx.beginPath();ctx.arc(w.x,w.y,w.r,0,Math.PI*2);ctx.stroke();ctx.strokeStyle=w.red?'rgba(255,45,73,.24)':'rgba(107,255,226,.2)';ctx.beginPath();ctx.arc(w.x,w.y,w.r*.82,0,Math.PI*2);ctx.stroke()}for(let d of decoys){ctx.strokeStyle=`rgba(116,255,224,${d.t/3})`;ctx.beginPath();ctx.arc(d.x,d.y,14,0,Math.PI*2);ctx.stroke()}
-if(hunter?.awake){drawHunter(hunter.x,hunter.y,performance.now()/1000);if(Math.floor(performance.now()/850)%2===0){ctx.strokeStyle='rgba(255,55,78,.6)';ctx.lineWidth=2;ctx.beginPath();ctx.arc(hunter.x,hunter.y,34,0,Math.PI*2);ctx.stroke()}}ctx.save();ctx.shadowBlur=18;ctx.shadowColor='#80ffe1';ctx.fillStyle='#d5fff3';ctx.beginPath();ctx.arc(player.x,player.y,player.r,0,Math.PI*2);ctx.fill();ctx.fillStyle='#43dcca';ctx.beginPath();ctx.arc(player.x+3,player.y-2,3,0,Math.PI*2);ctx.fill();ctx.restore();ctx.restore();
-// decorative scope frame
-ctx.strokeStyle='rgba(92,221,199,.09)';ctx.lineWidth=1;for(let r=125;r<Math.max(W,H);r+=125){ctx.beginPath();ctx.arc(W/2,H/2,r,0,Math.PI*2);ctx.stroke()}ctx.fillStyle='rgba(122,224,210,.48)';ctx.font='10px monospace';ctx.fillText('ACOUSTIC MAPPING // '+(hunter?.awake?'HOSTILE CONTACT':'PASSIVE SWEEP'),W/2-105,H-34);ctx.strokeStyle='rgba(98,231,207,.25)';ctx.beginPath();ctx.moveTo(W/2-12,H/2);ctx.lineTo(W/2+12,H/2);ctx.moveTo(W/2,H/2-12);ctx.lineTo(W/2,H/2+12);ctx.stroke()}
+function solid(x,y,r){
+  let l=Math.floor((x-r)/T),rr=Math.floor((x+r)/T),t=Math.floor((y-r)/T),b=Math.floor((y+r)/T);
+  for(let cy=t;cy<=b;cy++)for(let cx=l;cx<=rr;cx++)if(!walk(cx,cy)){let nx=clamp(x,cx*T,(cx+1)*T),ny=clamp(y,cy*T,(cy+1)*T);if((x-nx)**2+(y-ny)**2<r*r)return true}
+  return false;
+}
+function move(ent,dx,dy,r){if(!solid(ent.x+dx,ent.y,r))ent.x+=dx;if(!solid(ent.x,ent.y+dy,r))ent.y+=dy}
+function pathTo(from,to){
+  let a=cell(from.x,from.y),b=cell(to.x,to.y),d=Array.from({length:S},()=>Array(S).fill(null)),q=[a];d[a.y][a.x]=a;
+  for(let i=0;i<q.length;i++){let c=q[i];if(c.x===b.x&&c.y===b.y)break;for(let [dx,dy]of [[1,0],[-1,0],[0,1],[0,-1]]){let x=c.x+dx,y=c.y+dy;if(walk(x,y)&&!d[y][x]){d[y][x]=c;q.push({x,y})}}}
+  if(!d[b.y]?.[b.x])return[];let out=[],c=b;while(c.x!==a.x||c.y!==a.y){out.push(c);c=d[c.y][c.x]}return out.reverse();
+}
+function update(dt){
+  if(state!=='playing')return;
+  let dx=(keys.d?1:0)-(keys.a?1:0),dy=(keys.s?1:0)-(keys.w?1:0),moving=dx||dy;
+  if(moving){let l=Math.hypot(dx,dy);dx/=l;dy/=l}
+  let sprint=keys.shift&&integrity>1;
+  let sp=sprint?190:122;move(player,dx*sp*dt,dy*sp*dt,player.r);player.vx=dx*sp;player.vy=dy*sp;
+  integrity=clamp(integrity+(sprint?-17:moving?-3:10)*dt,0,100);charge=clamp(charge+17*dt,0,100);
+  if(integrity<=0){integrity=0;die()}
+  if(level===2&&hunter){
+    if(moving&&sprint)noise.push({x:player.x,y:player.y,r:0,max:500,speed:240,heard:false});
+    hunter.repath-=dt;
+    if(hunter.repath<=0){hunter.path=pathTo(hunter,hunter.target||player);hunter.repath=.35}
+    if(hunter.awake && hunter.path.length){
+      let target=world(hunter.path[0].x,hunter.path[0].y),vx=target.x-hunter.x,vy=target.y-hunter.y,l=Math.hypot(vx,vy)||1;move(hunter,vx/l*hunter.speed*dt,vy/l*hunter.speed*dt,hunter.r);if(hyp(hunter,target)<10)hunter.path.shift();
+    }
+    if(hunter.awake && hyp(player,hunter)<player.r+hunter.r+2){die()}
+  }
+  for(let w of waves)w.r+=w.speed*dt;waves=waves.filter(w=>w.r<w.max);
+  for(let n of noise){n.r+=n.speed*dt;if(level===2&&hunter&&!n.heard&&hyp(n,hunter)<n.r+T*.6){n.heard=true;hunter.awake=true;hunter.target={x:n.x,y:n.y};hunter.repath=0}}noise=noise.filter(n=>n.r<n.max);
+  reveals.forEach(r=>r.t-=dt);reveals=reveals.filter(r=>r.t>0);decoys.forEach(d=>d.t-=dt);decoys=decoys.filter(d=>d.t>0);if(toastTimer>0){toastTimer-=dt;if(toastTimer<=0)toastUI.classList.remove('show')}
+  if(level===1 && sites.every(s=>s.dug) && hyp(player,world(exit.x,exit.y))<T*1.4){say('HATCH OPEN // LEVEL COMPLETE')} 
+  if(level===2 && !artifact && hyp(player,world(exit.x,exit.y))<T*1.4){say('EXIT CLEAR // RUN FOR THE HATCH')} 
+  updateUI();
+}
+function drawHunter(x,y,time){
+  ctx.save();ctx.translate(x,y);let pulse=1+Math.sin(time*5)*.05;ctx.scale(pulse,pulse);ctx.shadowBlur=28;ctx.shadowColor='#ff214b';ctx.fillStyle='#280b18';ctx.strokeStyle='#ff405c';ctx.lineWidth=2;ctx.beginPath();for(let i=0;i<16;i++){let a=i*Math.PI/8,r=i%2?18:29;ctx.lineTo(Math.cos(a)*r,Math.sin(a)*r)}ctx.closePath();ctx.fill();ctx.stroke();ctx.shadowBlur=12;ctx.fillStyle='#ff3356';ctx.beginPath();ctx.ellipse(0,0,13,9,0,0,Math.PI*2);ctx.fill();ctx.fillStyle='#fff0e9';ctx.beginPath();ctx.ellipse(4,-2,3,2,0,0,Math.PI*2);ctx.fill();ctx.fillStyle='#ff234b';ctx.beginPath();ctx.arc(4,-2,1.3,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#ff6570';ctx.lineWidth=1.4;for(let i=-1;i<=1;i++){ctx.beginPath();ctx.moveTo(-7,i*4);ctx.lineTo(-18,i*9);ctx.stroke()}ctx.restore();
+}
+function draw(){
+  let camX=player?player.x-W/2:0,camY=player?player.y-H/2:0;ctx.fillStyle='#030a13';ctx.fillRect(0,0,W,H);if(!player)return;
+  ctx.save();ctx.translate(-camX,-camY);let left=Math.max(0,Math.floor(camX/T)-1),right=Math.min(S-1,Math.ceil((camX+W)/T)+1),top=Math.max(0,Math.floor(camY/T)-1),bottom=Math.min(S-1,Math.ceil((camY+H)/T)+1);
+  for(let y=top;y<=bottom;y++)for(let x=left;x<=right;x++){let px=x*T,py=y*T;if(grid[y][x]===1){ctx.fillStyle='#0a1a25';ctx.fillRect(px,py,T,T);ctx.strokeStyle='#142a34';ctx.strokeRect(px+1,py+1,T-2,T-2);ctx.fillStyle='#10232d';ctx.fillRect(px+5,py+5,T-10,2)}else{ctx.fillStyle='#07151e';ctx.fillRect(px,py,T,T);ctx.strokeStyle='#0c222b';ctx.strokeRect(px,py,T,T)}}
+  let grad=ctx.createRadialGradient(player.x,player.y,20,player.x,player.y,210);grad.addColorStop(0,'rgba(63,215,191,.12)');grad.addColorStop(1,'rgba(1,7,14,.82)');ctx.fillStyle=grad;ctx.fillRect(camX,camY,W,H);
+  for(let r of reveals){let g=ctx.createRadialGradient(r.x,r.y,20,r.x,r.y,r.r);g.addColorStop(0,r.red?'rgba(255,70,88,.15)':'rgba(40,200,179,.12)');g.addColorStop(1,'rgba(24,160,155,0)');ctx.fillStyle=g;ctx.fillRect(r.x-r.r,r.y-r.r,r.r*2,r.r*2)}
+  let e=world(exit.x,exit.y);ctx.save();ctx.shadowBlur=20;ctx.shadowColor='#70ffe0';ctx.strokeStyle='#83ffe1';ctx.lineWidth=2;ctx.beginPath();ctx.arc(e.x,e.y,18+Math.sin(performance.now()/400)*3,0,Math.PI*2);ctx.stroke();ctx.fillStyle='#cffff5';ctx.fillRect(e.x-5,e.y-5,10,10);ctx.restore();
+  for(let s of sites)if(!s.dug){let p=world(s.x,s.y);ctx.shadowBlur=14;ctx.shadowColor='#e8bd70';ctx.fillStyle='#e8bd70';ctx.beginPath();ctx.arc(p.x,p.y,7,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.strokeStyle='#e8bd7080';ctx.strokeRect(p.x-12,p.y-12,24,24)}
+  if(artifact){let p=world(artifact.x,artifact.y);ctx.shadowBlur=25;ctx.shadowColor='#ff4964';ctx.fillStyle='#ff5a6e';ctx.save();ctx.translate(p.x,p.y);ctx.rotate(performance.now()/900);ctx.fillRect(-9,-9,18,18);ctx.restore();ctx.shadowBlur=0}
+  for(let w of waves){ctx.strokeStyle=w.red?'rgba(255,53,86,.82)':'rgba(107,255,226,.65)';ctx.lineWidth=w.red?3:2;ctx.beginPath();ctx.arc(w.x,w.y,w.r,0,Math.PI*2);ctx.stroke();ctx.strokeStyle=w.red?'rgba(255,53,86,.24)':'rgba(107,255,226,.2)';ctx.beginPath();ctx.arc(w.x,w.y,w.r*.82,0,Math.PI*2);ctx.stroke()}
+  for(let d of decoys){ctx.strokeStyle=`rgba(116,255,224,${d.t/3})`;ctx.beginPath();ctx.arc(d.x,d.y,14,0,Math.PI*2);ctx.stroke()}
+  if(hunter&&hunter.awake){drawHunter(hunter.x,hunter.y,performance.now()/1000);if(Math.floor(performance.now()/850)%2===0){ctx.strokeStyle='rgba(255,55,78,.6)';ctx.lineWidth=2;ctx.beginPath();ctx.arc(hunter.x,hunter.y,34,0,Math.PI*2);ctx.stroke()}}
+  ctx.save();ctx.shadowBlur=18;ctx.shadowColor='#80ffe1';ctx.fillStyle='#d5fff3';ctx.beginPath();ctx.arc(player.x,player.y,player.r,0,Math.PI*2);ctx.fill();ctx.fillStyle='#43dcca';ctx.beginPath();ctx.arc(player.x+3,player.y-2,3,0,Math.PI*2);ctx.fill();ctx.restore();ctx.restore();
+  ctx.strokeStyle='rgba(92,221,199,.09)';ctx.lineWidth=1;for(let r=125;r<Math.max(W,H);r+=125){ctx.beginPath();ctx.arc(W/2,H/2,r,0,Math.PI*2);ctx.stroke()}ctx.fillStyle='rgba(122,224,210,.48)';ctx.font='10px monospace';ctx.fillText('ACOUSTIC MAPPING // '+(hunter&&hunter.awake?'HOSTILE CONTACT':'PASSIVE SWEEP'),W/2-105,H-34);ctx.strokeStyle='rgba(98,231,207,.25)';ctx.beginPath();ctx.moveTo(W/2-12,H/2);ctx.lineTo(W/2+12,H/2);ctx.moveTo(W/2,H/2-12);ctx.lineTo(W/2,H/2+12);ctx.stroke();
+}
 function frame(t){let dt=Math.min(.04,(t-last)/1000||0);last=t;update(dt);draw();requestAnimationFrame(frame)}requestAnimationFrame(frame);
 </script>
 </body>
