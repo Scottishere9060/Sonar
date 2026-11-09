@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>聲波雷達迷宮：回聲獵手 (Acoustic Radar Maze)</title>
+    <style>
+        body {
+            margin: 0;
+            background-color: #030305;
+            color: #00ff66;
+            font-family: 'Courier New', Courier, monospace;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            overflow: hidden;
+            user-select: none;
+        }
+        #game-container {
+            position: relative;
+            box-shadow: 0 0 40px rgba(0, 255, 102, 0.15);
+            border: 1px solid #004411;
+        }
+        #sonar-canvas {
+            background-color: #050508;
+            display: block;
+            cursor: crosshair;
+        }
+        #hud {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            pointer-events: none;
+            line-height: 1.5;
+            font-size: 14px;
+            text-shadow: 0 0 5px #00ff66;
+        }
+        .hud-metric { margin-bottom: 8px; }
+        #alert-box {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: #ff0055;
+            font-weight: bold;
+            font-size: 18px;
+            text-shadow: 0 0 8px #ff0055;
+            display: none;
+            letter-spacing: 2px;
+        }
+        #focus-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(5, 5, 8, 0.85);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            z-index: 10;
+            transition: opacity 0.3s ease;
+        }
+        .focus-text {
+            color: #00ff66;
+            font-size: 20px;
+            font-weight: bold;
+            text-shadow: 0 0 10px #00ff66;
+            margin-bottom: 15px;
+            letter-spacing: 1px;
+        }
+        .focus-sub {
+            color: #008833;
+            font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <!-- Click to Focus UI Overlay -->
+    <div id="focus-overlay" onclick="activateSonarSystem()">
+        <div class="focus-text">▶ 點擊螢幕激活聲納系統 (Click to Initialize)</div>
+        <div class="focus-sub">[ 激活後方可使用鍵盤 Q / E 鍵發射聲波 ]</div>
+    </div>
+
+    <div id="hud">
+        <div class="hud-metric">📡 系統狀態: SONAR SYSTEM ACTIVE</div>
+        <div class="hud-metric">Compass 導向: <span id="ui-angle">0°</span></div>
+        <div class="hud-metric">🔋 PFC 認知能量: <span id="ui-energy">100%</span></div>
+        <div class="hud-metric" style="color: #ffbe0b;">🧌 獵手威脅度: <span id="ui-threat">SAFE</span></div>
+        <div class="hud-metric" style="color: #00ff66; margin-top: 15px; font-weight: bold;">空間模型建立度: <span id="val-progress">0%</span></div>
+        <div style="margin-top: 15px; font-size: 11px; color: #008833;">
+            [滑鼠] 轉動方向 & 移動 | [Q鍵] 藍色高頻波 | [E鍵] 紅色低頻波
+        </div>
+    </div>
+    <div id="alert-box">⚠️ 警告：偵測到未知回聲源正在高速逼近 ⚠️</div>
+    <canvas id="sonar-canvas" width="900" height="700"></canvas>
+</div>
+
+<script>
+    const canvas = document.getElementById("sonar-canvas");
+    const ctx = canvas.getContext("2d");
+    const overlay = document.getElementById("focus-overlay");
+    
+    const state = {
+        pfc_energy: 100,
+        monster_alert: false,
+        gameOver: false,
+        win: false,
+        isFocused: false
+    };
+
+    const player = {
+        x: 100,
+        y: 100,
+        radius: 6,
+        angle: 0,
+        speed: 1.8
+    };
+
+    const monster = {
+        x: 800,
+        y: 600,
+        radius: 10,
+        speed: 1.3,
+        active: false
+    };
+
+    const escapePoint = { x: 820, y: 120, radius: 15 };
+
+    const walls = [
+        {x: 0, y: 0, w: 900, h: 20},
+        {x: 0, y: 680, w: 900, h: 20},
+        {x: 0, y: 0, w: 20, h: 700},
+        {x: 880, y: 0, w: 20, h: 700},
+        {x: 220, y: 20, w: 30, h: 420},
+        {x: 220, y: 530, w: 30, h: 170},
+        {x: 400, y: 180, w: 30, h: 520},
+        {x: 580, y: 20, w: 30, h: 450},
+        {x: 740, y: 250, w: 30, h: 450}
+    ];
+
+    let waves = [];
+    let discoveredPoints = []; 
+
+    let mouseX = player.x;
+    let mouseY = player.y;
+
+    // 點擊遮罩激活焦點函數
+    function activateSonarSystem() {
+        overlay.style.opacity = "0";
+        setTimeout(() => {
+            overlay.style.display = "none";
+        }, 300);
+        state.isFocused = true;
+        canvas.focus();
+    }
+
+    window.addEventListener("mousemove", (e) => {
+        if (!state.isFocused) return;
+        const rect = canvas.getBoundingClientRect();
+        mouseX = e.clientX - rect.left;
+        mouseY = e.clientY - rect.top;
+    });
+
+    // 強制將按鍵接管綁定到 window 全局，防止焦點丟失
+    window.addEventListener("keydown", (e) => {
+        if (!state.isFocused || state.gameOver) return;
+        
+        const key = e.key.toLowerCase();
+        if (key === 'q' && state.pfc_energy >= 20) {
+            state.pfc_energy -= 20;
+            spawnWave("high");
+        }
+        if (key === 'e' && state.pfc_energy >= 10) {
+            state.pfc_energy -= 10;
+            spawnWave("low");
+        }
+    });
+
+    function spawnWave(type) {
+        const numParticles = type === "high" ? 180 : 360;
+        const speed = type === "high" ? 6.5 : 3.5;
+        const maxLife = type === "high" ? 40 : 130;
+        const color = type === "high" ? "rgba(0, 136, 255," : "rgba(255, 0, 110,";
+
+        for (let i = 0; i < numParticles; i++) {
+            const angle = (Math.PI * 2 / numParticles) * i;
+            waves.push({
+                x: player.x,
+                y: player.y,
+                vx: Math.cos(angle) * speed,
+                vy: Math.sin(angle) * speed,
+                life: maxLife,
+                maxLife: maxLife,
+                color: color,
+                waveType: type
+            });
+        }
+    }
+
+    function checkCollision(circle, rect) {
+        const distX = Math.abs(circle.x - rect.x - rect.w / 2);
+        const distY = Math.abs(circle.y - rect.y - rect.h / 2);
+        if (distX > (rect.w / 2 + circle.radius)) return false;
+        if (distY > (rect.h / 2 + circle.radius)) return false;
+        if (distX <= (rect.w / 2)) return true;
+        if (distY <= (rect.h / 2)) return true;
+        const dx = distX - rect.w / 2;
+        const dy = distY - rect.h / 2;
+        return (dx * dx + dy * dy <= (circle.radius * circle.radius));
+    }
+
+    function update() {
+        if (!state.isFocused || state.gameOver) return;
+
+        const dx = mouseX - player.x;
+        const dy = mouseY - player.y;
+        player.angle = Math.atan2(dy, dx);
+        
+        const nextX = player.x + Math.cos(player.angle) * player.speed;
+        const nextY = player.y + Math.sin(player.angle) * player.speed;
+        
+        let collides = false;
+        walls.forEach(w => {
+            if (checkCollision({x: nextX, y: nextY, radius: player.radius}, w)) collides = true;
+        });
+        
+        if (!collides) {
+            player.x = nextX;
+            player.y = nextY;
+        }
+
+        if (state.pfc_energy < 100) state.pfc_energy = Math.min(100, state.pfc_energy + 0.2);
+
+        waves.forEach((w) => {
+            w.x += w.vx;
+            w.y += w.vy;
+            w.life--;
+
+            walls.forEach(wall => {
+                if (w.x >= wall.x && w.x <= wall.x + wall.w && w.y >= wall.y && w.y <= wall.y + wall.h) {
+                    discoveredPoints.push({x: w.x, y: w.y, type: w.waveType, alpha: 1.0});
+                    w.life = 0; 
+                }
+            });
+
+            if (monster.active === false && Math.hypot(w.x - monster.x, w.y - monster.y) < monster.radius) {
+                monster.active = true;
+                state.monster_alert = true;
+                document.getElementById("alert-box").style.display = "block";
+                document.getElementById("ui-threat").innerText = "🚨 PURSUING";
+                document.getElementById("ui-threat").style.color = "#ff0055";
+            }
+        });
+        waves = waves.filter(w => w.life > 0);
+
+        if (monster.active) {
+            const mdx = player.x - monster.x;
+            const mdy = player.y - monster.y;
+            const mAngle = Math.atan2(mdy, mdx);
+            monster.x += Math.cos(mAngle) * monster.speed;
+            monster.y += Math.sin(mAngle) * monster.speed;
+
+            if (Math.hypot(player.x - monster.x, player.y - monster.y) < player.radius + monster.radius) {
+                state.gameOver = true;
+                state.win = false;
+            }
+        }
+
+        if (Math.hypot(player.x - escapePoint.x, player.y - escapePoint.y) < escapePoint.radius) {
+            state.gameOver = true;
+            state.win = true;
+        }
+
+        discoveredPoints.forEach(p => p.alpha -= 0.003);
+        discoveredPoints = discoveredPoints.filter(p => p.alpha > 0);
+
+        // HUD 數據刷新
+        const degreeAngle = Math.round((player.angle * 180 / Math.PI + 360) % 360);
+        document.getElementById("ui-angle").innerText = `${degreeAngle}°`;
+        document.getElementById("ui-energy").innerText = `${Math.round(state.pfc_energy)}%`;
+        
+        const currentProgress = Math.min(100, Math.round((Math.hypot(player.x - 100, player.y - 100) / 940) * 100));
+        document.getElementById("val-progress").innerText = `${currentProgress}%`;
+    }
+
+    function draw() {
+        ctx.fillStyle = "#050508";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // 1. 繪製聲納探測殘影
+        discoveredPoints.forEach(p => {
+            ctx.fillStyle = p.type === "high" ? `rgba(0, 136, 255, ${p.alpha})` : `rgba(255, 0, 110, ${p.alpha})`;
+            ctx.fillRect(p.x, p.y, 2, 2);
+        });
+
+        // 2. 繪製傳播粒子波
+        waves.forEach(w => {
+            const alpha = w.life / w.maxLife;
+ctx.fillStyle = ${w.color}${alpha});
+ctx.fillRect(w.x, w.y, 2, 2);
+});
+// 3. 繪製白色圓點 (Player)
+ctx.beginPath();
+ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+ctx.fillStyle = "#ffffff";
+ctx.shadowBlur = 12;
+ctx.shadowColor = "#ffffff";
+ctx.fill();
+ctx.shadowBlur = 0;
+// 雷達引導射線
+ctx.beginPath();
+ctx.moveTo(player.x, player.y);
+ctx.lineTo(player.x + Math.cos(player.angle) * 20, player.y + Math.sin(player.angle) * 20);
+ctx.strokeStyle = "rgba(0, 255, 102, 0.5)";
+ctx.lineWidth = 1.5;
+ctx.stroke();
+// 4. 渲染怪物的威脅漣漪
+if (monster.active) {
+waves.forEach(w => {
+if (Math.hypot(w.x - monster.x, w.y - monster.y) < 50) {
+ctx.beginPath();
+ctx.arc(monster.x, monster.y, monster.radius + 18 * Math.random(), 0, Math.PI * 2);
+ctx.strokeStyle = rgba(255, 0, 85, ${w.life / w.maxLife});
+ctx.stroke();
+}
+});
+}
+if (state.gameOver) {
+ctx.fillStyle = "rgba(3, 3, 5, 0.9)";
+ctx.fillRect(0, 0, canvas.width, canvas.height);
+ctx.font = "22px Courier New";
+ctx.textAlign = "center";
+ctx.shadowBlur = 10;
+if (state.win) {
+ctx.fillStyle = "#00ff66";
+ctx.shadowColor = "#00ff66";
+ctx.fillText("👑 認知模型重構成功：成功逃脫迷宮 👑", canvas.width / 2, canvas.height / 2);
+} else {
+ctx.fillStyle = "#ff0055";
+ctx.shadowColor = "#ff0055";
+ctx.fillText("🛑 預測加工崩潰：你被回聲獵手捕獲 🛑", canvas.width / 2, canvas.height / 2);
+}
+ctx.shadowBlur = 0;
+}
+}
+function mainLoop() {
+update();
+draw();
+requestAnimationFrame(mainLoop);
+}
+mainLoop
